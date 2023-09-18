@@ -1,0 +1,6 @@
+def main1 = (fn(f) f(7))(fn(n: Int) n)
+def main2 = (fn(f: Int->Int) f(7))(fn(n: Int) n)
+// def main3 = (fn(f: Int->Int) f(fn(a: Int) 2))(fn(n: Int) n) // type error here
+def main4 = (fn(id: fn<a> a->a) ((id<Int->Int>)(id<Int>))((id<Int>)(4)))(fn<a> fn(x: a) x)
+def id = fn<a> fn(x: a) x
+def main5 = ((id<Int->Int>)(id<Int>))((id<Int>)(4))
