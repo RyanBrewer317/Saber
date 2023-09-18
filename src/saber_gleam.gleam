@@ -4,8 +4,8 @@ import gleam/result
 import gleam/map
 import gleam/list
 import parser
-import core.{pretty_expr3}
-import monad.{CouldntOpenFile, do, try}
+import core.{pretty_expr, pretty_err, CouldntOpenFile}
+import monad.{do, try}
 import ast
 import type_check
 import eval
@@ -24,8 +24,8 @@ pub fn main() {
     eval.go(list.reverse(typed_ast))
   }
   case monad.run(m) {
-    Ok(e) -> ">> " <> pretty_expr3(e)
-    Error(e) -> monad.pretty_err(e)
+    Ok(e) -> ">> " <> pretty_expr(e)
+    Error(e) -> pretty_err(e)
   }
   |> io.println()
 }

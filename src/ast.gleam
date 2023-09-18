@@ -1,5 +1,5 @@
-import core.{Id, Stmt1, Stmt2, Def1, Def2, Expr1, Expr2, Int1, Int2, Ident1, Ident2, Lam1, Lam2, TLam1, TLam2, App1, App2, TApp1, TApp2, TDynamic2, Type1, Type2, TVar1, TVar2, TConstr1, TConstr2, TForall1, TForall2, TFuncType1, TFuncType2}
-import monad.{Monad, fresh, do, return, fail, Undefined}
+import core.{Id, Stmt1, Stmt2, Def1, Def2, Expr1, Expr2, Int1, Int2, Ident1, Ident2, Lam1, Lam2, TLam1, TLam2, App1, App2, TApp1, TApp2, TDynamic2, Type1, Type2, TVar1, TVar2, TConstr1, TConstr2, TForall1, TForall2, TFuncType1, TFuncType2, Undefined}
+import monad.{Monad, fresh, do, return, fail}
 import gleam/map.{Map, get, insert}
 
 pub fn iteratee(s: Stmt1, so_far: #(List(Stmt2), Map(String, Id))) -> Monad(#(List(Stmt2), Map(String, Id))) {

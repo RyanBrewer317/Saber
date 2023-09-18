@@ -3,7 +3,7 @@ import core.{
   App2, App3, Def2, Def3, Downcast3, Expr2, Expr3, Id, Ident2, Ident3, Int2,
   Int3, Lam2, Lam3, Stmt2, Stmt3, TApp2, TApp3, TConstr2, TConstr3, TDynamic2,
   TDynamic3, TForall2, TForall3, TFuncType2, TFuncType3, TLam2, TLam3, TVar2,
-  TVar3, Type2, Type3, Upcast3,
+  TVar3, Type2, Type3, Upcast3, CallingNonFunction, CallingNonForall, TypeError
 }
 import gleam/map.{Map, get, insert}
 import gleam/int.{to_string}
@@ -57,7 +57,7 @@ fn expr(e: Expr2, typevars: List(Id), gamma: Map(Id, Type3)) -> Monad(Expr3) {
           use bar2 <- do(expr(bar, typevars, gamma))
           return(App3(p, TDynamic3, Downcast3(p, foo2, TDynamic3, TFuncType3(typeof(bar2), TDynamic3)), bar2))
         }
-        t -> monad.fail(monad.CallingNonFunction(t))
+        t -> monad.fail(CallingNonFunction(t))
       }
     }
     TApp2(p, foo, bar) -> {
@@ -67,7 +67,7 @@ fn expr(e: Expr2, typevars: List(Id), gamma: Map(Id, Type3)) -> Monad(Expr3) {
           use bar2 <- do(typ(bar))
           return(TApp3(p, substitute(arg, bar2, body), foo2, bar2))
         }
-        t -> monad.fail(monad.CallingNonForall(t))
+        t -> monad.fail(CallingNonForall(t))
       }
     }
   }
@@ -134,7 +134,7 @@ fn simplify(expr: Expr3) -> Monad(Expr3) {
         Ok(t) -> {
           simplify(Upcast3(p, Downcast3(p, e, t1, t), t, t4))
         }
-        Error(Nil) -> monad.fail(monad.TypeError(t1, t4))
+        Error(Nil) -> monad.fail(TypeError(t1, t4))
       }
     e -> return(e)
   }

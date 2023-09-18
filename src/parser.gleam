@@ -1,6 +1,6 @@
 import core.{
   App1, Def1, Expr1, TFuncType1, Ident1, Int1, Lam1, Stmt1, TApp1, TConstr1,
-  TForall1, TLam1, TVar1, Type1,
+  TForall1, TLam1, TVar1, Type1, ParseError
 }
 import gleam/string
 import gleam/int
@@ -175,6 +175,6 @@ pub fn parse(src: String) -> monad.Monad(List(Stmt1)) {
     },
     src,
   )
-  |> result.map_error(monad.ParseError)
+  |> result.map_error(ParseError)
   |> monad.lift
 }
