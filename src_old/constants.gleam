@@ -9,7 +9,8 @@ pub opaque type ConstantMessage {
   ShutDown
 }
 
-pub type ConstantServer = process.Subject(ConstantMessage)
+pub type ConstantServer =
+  process.Subject(ConstantMessage)
 
 pub fn go() -> g.MaybeActor(ConstantServer) {
   actor.start(

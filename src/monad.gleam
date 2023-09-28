@@ -1,4 +1,4 @@
-import core.{Id, Error}
+import core.{Error, Id}
 
 pub opaque type Monad(a) {
   Monad(fn(Id) -> Result(#(a, Id), Error))
@@ -32,7 +32,7 @@ pub fn lift(x: Result(a, Error)) -> Monad(a) {
   }
 }
 
-pub fn try(x: Result(a, Error), f: fn(a)->Monad(b)) -> Monad(b) {
+pub fn try(x: Result(a, Error), f: fn(a) -> Monad(b)) -> Monad(b) {
   do(lift(x), f)
 }
 
@@ -59,12 +59,29 @@ pub fn map(l: List(a), f: fn(a) -> Monad(b)) -> Monad(List(b)) {
   }
 }
 
-pub fn reduce(l: List(a), base: b, f: fn(a, b)->Monad(b)) -> Monad(b) {
+pub fn fmap(ma: Monad(a), f: fn(a) -> b) -> Monad(b) {
+  let Monad(g) = ma
+  Monad(fn(curr_id) {
+    case g(curr_id) {
+      Ok(#(a, new_id)) -> Ok(#(f(a), new_id))
+      Error(e) -> Error(e)
+    }
+  })
+}
+
+pub fn reduce(l: List(a), base: b, f: fn(a, b) -> Monad(b)) -> Monad(b) {
   case l {
     [] -> return(base)
     [x, ..xs] -> {
       use b2 <- do(f(x, base))
       reduce(xs, b2, f)
     }
+  }
+}
+
+pub fn when(cond: Bool, ma: Monad(Nil)) -> Monad(Nil) {
+  case cond {
+    True -> ma
+    False -> return(Nil)
   }
 }

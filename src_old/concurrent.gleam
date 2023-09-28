@@ -63,18 +63,21 @@ pub fn collect(s: Stream(a)) -> List(a) {
   |> iterator.to_list()
 }
 
-pub fn defer(f: fn()->Nil, g: fn()->Nil) -> Nil {
+pub fn defer(f: fn() -> Nil, g: fn() -> Nil) -> Nil {
   g()
   f()
 }
 
-pub fn with(stream: Stream(a), f: fn()->b) -> b {
+pub fn with(stream: Stream(a), f: fn() -> b) -> b {
   let out = f()
   finish(stream)
   out
 }
 
-pub fn foreach_unless_error(stream: Stream(a), f: fn(a) -> Result(Nil, c)) -> Result(Nil, c) {
+pub fn foreach_unless_error(
+  stream: Stream(a),
+  f: fn(a) -> Result(Nil, c),
+) -> Result(Nil, c) {
   case next(stream) {
     Ok(a) -> {
       case f(a) {

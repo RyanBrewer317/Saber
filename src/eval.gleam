@@ -1,9 +1,19 @@
-import core.{Id, Stmt3, Expr3, Def3, Int3, Ident3, Lam3, TLam3, App3, TApp3, Downcast3, Upcast3}
-import monad.{Monad, return, do}
+import core.{
+  App4, Builtin4, Def4, Downcast4, Expr4, Func4, Id, Ident4, Int4, Stmt4,
+  TDynamic4, TKind4, TLabelKind4, TLabelType4, TPi4, TType4, Upcast4,
+}
+import monad.{Monad, do, return}
+import gleam/list
+import gleam/int
+import gleam/string
+import gleam/io
 import gleam/map.{Map, get, insert}
 
-type Stmt = Stmt3
-type Expr = Expr3
+type Stmt =
+  Stmt4
+
+type Expr =
+  Expr4
 
 pub fn go(ast: List(Stmt)) -> Monad(Expr) {
   let assert [s, ..ss] = ast
@@ -12,7 +22,10 @@ pub fn go(ast: List(Stmt)) -> Monad(Expr) {
   return(res)
 }
 
-fn iteratee(s: Stmt, so_far: #(Expr, Map(Id, Expr))) -> Monad(#(Expr, Map(Id, Expr))) {
+fn iteratee(
+  s: Stmt,
+  so_far: #(Expr, Map(Id, Expr)),
+) -> Monad(#(Expr, Map(Id, Expr))) {
   let #(_, heap) = so_far
   use #(val, id) <- do(stmt(s, heap))
   return(#(val, insert(heap, id, val)))
@@ -20,34 +33,77 @@ fn iteratee(s: Stmt, so_far: #(Expr, Map(Id, Expr))) -> Monad(#(Expr, Map(Id, Ex
 
 fn stmt(s: Stmt, heap: Map(Id, Expr)) -> Monad(#(Expr, Id)) {
   case s {
-    Def3(id, val) -> {
+    Def4(_, id, val) -> {
       use val2 <- do(expr(val, insert(heap, id, val)))
       return(#(val2, id))
     }
   }
 }
 
-fn expr(e: Expr3, heap: Map(Id, Expr3)) -> Monad(Expr3) {
+fn expr(e: Expr, heap: Map(Id, Expr)) -> Monad(Expr) {
   case e {
-    Int3(p, i) -> return(Int3(p, i))
-    Ident3(_, _, id) -> 
+    Int4(p, i) -> return(Int4(p, i))
+    Ident4(p, _, id) ->
       case get(heap, id) {
         Ok(val) -> expr(val, heap)
-        Error(Nil) -> panic("undefined variable at runtime")
+        Error(Nil) ->
+          panic(io.debug(
+            "undefined variable " <> int.to_string(id) <> " at runtime, " <> string.inspect(
+              p,
+            ),
+          ))
       }
-    Lam3(_, _, _, _, _) -> return(e) // no eta reduction
-    TLam3(_, _, _, _) -> return(e)   // no eta reduction
-    App3(_, _, foo, bar) -> {
-      use foo2 <- do(expr(foo, heap))
-      use bar2 <- do(expr(bar, heap))
-      let assert Lam3(_, _, arg, _, body) = foo2
-      expr(body, insert(heap, arg, bar2))
+    Builtin4(p, t, n) -> {
+      use t2 <- do(expr(t, heap))
+      return(Builtin4(p, t2, n))
     }
-    TApp3(_, _, foo, _) -> {
-      use foo2 <- do(expr(foo, heap))
-      let assert TLam3(_, _, _, body) = foo2
-      expr(body, heap)
+    // no eta reduction
+    Func4(p, t, args, body) -> {
+      use t2 <- do(expr(t, heap))
+      use #(args2, _) <- do(monad.reduce(
+        args,
+        #([], heap),
+        fn(a, state) {
+          let #(args_so_far, heap_so_far) = state
+          let #(argid, argt) = a
+          use argt2 <- do(expr(argt, heap_so_far))
+          return(#([a, ..args_so_far], insert(heap_so_far, argid, argt2)))
+        },
+      ))
+      return(Func4(p, t2, list.reverse(args2), body))
     }
-    Downcast3(_, e, _, _) | Upcast3(_, e, _, _) -> expr(e, heap)
+    App4(_, _, func, args) -> {
+      use func2 <- do(expr(func, heap))
+      use args2 <- do(monad.map(args, expr(_, heap)))
+      let assert Func4(_, _, formal_args, body) = func2
+      expr(
+        body,
+        list.fold(
+          list.zip(formal_args, args2),
+          heap,
+          fn(a, b) { map.insert(a, { b.0 }.0, b.1) },
+        ),
+      )
+    }
+    Downcast4(_, e, _, _) | Upcast4(_, e, _, _) -> expr(e, heap)
+    // no eta reduction
+    TPi4(p, args, body) -> {
+      use #(args2, _) <- do(monad.reduce(
+        args,
+        #([], heap),
+        fn(a, state) {
+          let #(args_so_far, heap_so_far) = state
+          let #(argid, argt) = a
+          use argt2 <- do(expr(argt, heap_so_far))
+          return(#([a, ..args_so_far], insert(heap_so_far, argid, argt2)))
+        },
+      ))
+      return(TPi4(p, list.reverse(args2), body))
+    }
+    TDynamic4(_) -> return(e)
+    TType4(_) -> return(e)
+    TKind4(_) -> return(e)
+    TLabelType4(_) -> return(e)
+    TLabelKind4(_) -> return(e)
   }
 }

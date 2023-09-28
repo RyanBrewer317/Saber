@@ -4,10 +4,11 @@ import gleam/result
 import gleam/map
 import gleam/list
 import parser
-import core.{pretty_expr, pretty_err, CouldntOpenFile}
+import core.{CouldntOpenFile, pretty_err, pretty_expr}
 import monad.{do, try}
 import ast
 import type_check
+import elab
 import eval
 
 pub fn main() {
@@ -19,9 +20,19 @@ pub fn main() {
     io.println(code)
     use prog <- do(parser.parse(code))
     // todo: use/store renames for pretty printing purposes?
-    use #(ast, _) <- do(monad.reduce(prog, #([], map.new()), ast.iteratee))
-    use #(typed_ast, _) <- do(monad.reduce(list.reverse(ast), #([], map.new()), type_check.iteratee))
-    eval.go(list.reverse(typed_ast))
+    use #(ast, _) <- do(monad.reduce(prog, #([], []), ast.iteratee))
+    // io.debug(list.reverse(ast))
+    use #(typed_ast, _) <- do(monad.reduce(
+      list.reverse(ast),
+      #([], map.new()),
+      type_check.iteratee,
+    ))
+    use #(elaborated_ast) <- do(monad.reduce(
+      list.reverse(typed_ast),
+      #([]),
+      elab.iteratee,
+    ))
+    eval.go(list.reverse(elaborated_ast))
   }
   case monad.run(m) {
     Ok(e) -> ">> " <> pretty_expr(e)

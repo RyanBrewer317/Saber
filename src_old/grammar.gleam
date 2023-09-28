@@ -79,8 +79,7 @@ pub type Stmt {
 
 pub fn pretty_stmt(s: Stmt) -> String {
   case s {
-    Def(id, body) ->
-      "def x" <> int.to_string(id) <> " = " <> pretty_expr(body)
+    Def(id, body) -> "def x" <> int.to_string(id) <> " = " <> pretty_expr(body)
   }
 }
 
@@ -198,7 +197,7 @@ pub type ANFStmt {
 pub fn pretty_anf_stmt(stmt) {
   case stmt {
     ANFDef(id, body) ->
-      "def x" <> int.to_string(id) <> " = " <> pretty_anf_expr(body) 
+      "def x" <> int.to_string(id) <> " = " <> pretty_anf_expr(body)
   }
 }
 
@@ -207,7 +206,12 @@ pub type CPSVal {
   CPSLocal(Id(ExprPh), Type)
   CPSGlobal(Id(ExprPh), Type)
   CPSTuple(List(CPSVal), Type)
-  CPSFunc(id: Id(ExprPh), tvars: List(Id(TypePh)), args: List(#(Id(ExprPh), Type)), body: CPSExpr)
+  CPSFunc(
+    id: Id(ExprPh),
+    tvars: List(Id(TypePh)),
+    args: List(#(Id(ExprPh), Type)),
+    body: CPSExpr,
+  )
 }
 
 pub type CPSExpr {
