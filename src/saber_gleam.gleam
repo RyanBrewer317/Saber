@@ -1,4 +1,3 @@
-import gleam/erlang/file
 import gleam/io
 import gleam/result
 import gleam/map
@@ -11,10 +10,13 @@ import type_check
 import elab
 import eval
 
+@external(javascript, "./comp_helpers.mjs", "readFile")
+fn read_file(path: String) -> Result(String, String)
+
 pub fn main() {
   let m = {
     use code <- try(
-      file.read("main.sb")
+      read_file("main.sb")
       |> result.map_error(CouldntOpenFile),
     )
     io.println(code)

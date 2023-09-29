@@ -52,8 +52,7 @@ fn expr(gamma: Map(Id, Expr3), e: Expr2) -> Monad(Expr3) {
             monad.fail(CallingWrongArity(p, typeof(func2), list.length(args))),
           )
           use args2 <- do(monad.map(args, expr(gamma, _)))
-          let solutions =
-            solve(imp_args, formal_args, args2)
+          let solutions = solve(imp_args, formal_args, args2)
           use supplied_imp_args <- do(monad.map(
             imp_args,
             fn(a) {

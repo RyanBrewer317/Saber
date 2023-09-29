@@ -1,12 +1,11 @@
 import core.{
   App3, App4, Builtin3, Builtin4, Def3, Def4, Downcast3, Downcast4, Expr3, Expr4,
-  Func3, Func4, Id, Ident3, Ident4, Int3, Int4, Stmt3, Stmt4, TDynamic3,
+  Func3, Func4, Ident3, Ident4, Int3, Int4, Stmt3, Stmt4, TDynamic3,
   TDynamic4, TKind3, TKind4, TLabelKind3, TLabelKind4, TLabelType3, TLabelType4,
-  TPi3, TPi4, TType3, TType4, Upcast3, Upcast4, typeof,
+  TPi3, TPi4, TType3, TType4, Upcast3, Upcast4,
 }
 import monad.{Monad, do, return}
 import gleam/list
-import gleam/map.{Map}
 
 pub fn iteratee(s: Stmt3, so_far: #(List(Stmt4))) -> Monad(#(List(Stmt4))) {
   use s2 <- do(stmt(s))
@@ -43,9 +42,7 @@ fn expr(e: Expr3) -> Monad(Expr4) {
       ))
       let args3 = list.append(imp_args2, args2)
       use body2 <- do(expr(body))
-      return(
-        Func4(p, t2, args3, body2)
-      )
+      return(Func4(p, t2, args3, body2))
     }
     App3(p, t, func, args) -> {
       use func2 <- do(expr(func))

@@ -2,10 +2,9 @@ import gleam/int.{to_string}
 import gleam/string
 import gleam/list
 import party.{ParseError, Position}
-import gleam/erlang/file.{Reason}
 
 pub type Error {
-  CouldntOpenFile(Reason)
+  CouldntOpenFile(String)
   ParseError(ParseError(Nil))
   Undefined(Position, String)
   TypeError(Position, Expr3, Expr3)
