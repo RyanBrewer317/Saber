@@ -9,14 +9,19 @@ import ast
 import type_check
 import elab
 import eval
+import shellout.{arguments}
 
 @external(javascript, "./comp_helpers.mjs", "readFile")
 fn read_file(path: String) -> Result(String, String)
 
 pub fn main() {
   let m = {
+    use filename <- try(
+      list.at(arguments(), 1)
+      |> result.replace_error(CouldntOpenFile("no filename provided")),
+    )
     use code <- try(
-      read_file("main.sb")
+      read_file(filename)
       |> result.map_error(CouldntOpenFile),
     )
     io.println(code)

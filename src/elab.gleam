@@ -1,8 +1,8 @@
 import core.{
   App3, App4, Builtin3, Builtin4, Def3, Def4, Downcast3, Downcast4, Expr3, Expr4,
-  Func3, Func4, Ident3, Ident4, Int3, Int4, Stmt3, Stmt4, TDynamic3,
-  TDynamic4, TKind3, TKind4, TLabelKind3, TLabelKind4, TLabelType3, TLabelType4,
-  TPi3, TPi4, TType3, TType4, Upcast3, Upcast4,
+  Func3, Func4, Ident3, Ident4, Int3, Int4, Stmt3, Stmt4, TDynamic3, TDynamic4,
+  TKind3, TKind4, TLabelKind3, TLabelKind4, TLabelType3, TLabelType4, TPi3, TPi4,
+  TType3, TType4, Upcast3, Upcast4,
 }
 import monad.{Monad, do, return}
 import gleam/list

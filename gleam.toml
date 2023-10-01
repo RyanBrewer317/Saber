@@ -12,6 +12,7 @@ target = "javascript"
 
 [dependencies]
 gleam_stdlib = "~> 0.30"
+shellout = "~> 1.4"
 party = "~> 0.1"
 
 [dev-dependencies]
