@@ -1,16 +1,28 @@
 import monad.{Monad, do, return}
 import core.{
   App2, App3, Builtin2, Builtin3, CallingNonFunction, CallingWrongArity, Def2,
-  Def3, Downcast3, Expr2, Expr3, Func2, Func3, Id, Ident2, Ident3, Int2, Int3,
-  Stmt2, Stmt3, TDynamic2, TDynamic3, TLabelType2, TLabelType3, TPi2, TPi3,
-  TType2, TType3, TypeError, Upcast3, contains3, substitute, type_eq, typeof,
+  Def3, DotAccess2, Downcast3, Expr2, Expr3, Func2, Func3, Id, Ident2, Ident3,
+  Import2, Import3, Int2, Int3, Library2, Library3, Module2, Module3, Stmt2,
+  Stmt3, TDynamic2, TDynamic3, TLabelType2, TLabelType3, TPi2, TPi3, TType2,
+  TType3, TypeError, Upcast3, contains3, substitute, type_eq, typeof,
 }
 import gleam/map.{Map, get, insert}
 import gleam/int.{to_string}
 import gleam/result
 import gleam/list
 
-pub fn iteratee(s: Stmt2, so_far: #(List(Stmt3), Map(Id, Expr3))) {
+pub fn annotate_lib(lib2: Library2) -> Monad(Library3) {
+  use entry <- do(annotate_mod(lib2.entry))
+  return(Library3(lib2.path, entry))
+}
+
+fn annotate_mod(mod2: Module2) -> Monad(Module3) {
+  use #(ast, _) <- do(monad.reduce(mod2.ast, #([], map.new()), iteratee))
+  use subs <- do(monad.map(mod2.subs, annotate_mod))
+  return(Module3(mod2.path, subs, mod2.files, list.reverse(ast)))
+}
+
+fn iteratee(s: Stmt2, so_far: #(List(Stmt3), Map(Id, Expr3))) {
   let #(ast, gamma) = so_far
   use #(s2, gamma2) <- do(stmt(s, gamma))
   return(#([s2, ..ast], gamma2))
@@ -25,6 +37,7 @@ fn stmt(s: Stmt2, gamma: Map(Id, Expr3)) -> Monad(#(Stmt3, Map(Id, Expr3))) {
       )
       return(#(Def3(p, id, val2), insert(gamma, id, typeof(val2))))
     }
+    Import2(p, name) -> return(#(Import3(p, name), gamma))
   }
 }
 
@@ -160,6 +173,7 @@ fn expr(gamma: Map(Id, Expr3), e: Expr2) -> Monad(Expr3) {
       )
       return(TPi3(p, imp_args, args2, body2))
     }
+    DotAccess2(_, _, _) -> todo
     TDynamic2(p) -> return(TDynamic3(p))
     TLabelType2(p) -> return(TLabelType3(p))
   }

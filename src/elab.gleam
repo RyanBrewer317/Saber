@@ -1,13 +1,25 @@
 import core.{
-  App3, App4, Builtin3, Builtin4, Def3, Def4, Downcast3, Downcast4, Expr3, Expr4,
-  Func3, Func4, Ident3, Ident4, Int3, Int4, Stmt3, Stmt4, TDynamic3, TDynamic4,
+  App3, App4, Builtin3, Builtin4, Def3, Def4, DotAccess3, DotAccess4, Downcast3,
+  Downcast4, Expr3, Expr4, Func3, Func4, Ident3, Ident4, Import3, Import4, Int3,
+  Int4, Library3, Library4, Module3, Module4, Stmt3, Stmt4, TDynamic3, TDynamic4,
   TKind3, TKind4, TLabelKind3, TLabelKind4, TLabelType3, TLabelType4, TPi3, TPi4,
   TType3, TType4, Upcast3, Upcast4,
 }
 import monad.{Monad, do, return}
 import gleam/list
 
-pub fn iteratee(s: Stmt3, so_far: #(List(Stmt4))) -> Monad(#(List(Stmt4))) {
+pub fn elaborate_lib(lib3: Library3) -> Monad(Library4) {
+  use entry <- do(elaborate_mod(lib3.entry))
+  return(Library4(lib3.path, entry))
+}
+
+fn elaborate_mod(mod3: Module3) -> Monad(Module4) {
+  use #(ast) <- do(monad.reduce(mod3.ast, #([]), iteratee))
+  use subs <- do(monad.map(mod3.subs, elaborate_mod))
+  return(Module4(mod3.path, subs, mod3.files, list.reverse(ast)))
+}
+
+fn iteratee(s: Stmt3, so_far: #(List(Stmt4))) -> Monad(#(List(Stmt4))) {
   use s2 <- do(stmt(s))
   let #(so_far2) = so_far
   return(#([s2, ..so_far2]))
@@ -18,6 +30,7 @@ pub fn stmt(s: Stmt3) -> Monad(Stmt4) {
     Def3(p, id, e) ->
       expr(e)
       |> monad.fmap(Def4(p, id, _))
+    Import3(p, name) -> return(Import4(p, name))
   }
 }
 
@@ -30,6 +43,11 @@ fn expr(e: Expr3) -> Monad(Expr4) {
     Builtin3(p, t, name) ->
       expr(t)
       |> monad.fmap(Builtin4(p, _, name))
+    DotAccess3(p, t, e2, field) -> {
+      use t2 <- do(expr(t))
+      use e22 <- do(expr(e2))
+      return(DotAccess4(p, t2, e22, field))
+    }
     Func3(p, t, imp_args, args, body) -> {
       use t2 <- do(expr(t))
       let imp_args2 = list.map(imp_args, fn(a) { #(a, TType4(p)) })

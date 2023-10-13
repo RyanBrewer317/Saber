@@ -3,10 +3,70 @@ import gleam/string
 import gleam/list
 import party.{ParseError, Position}
 
+pub type Library0 {
+  Library0(path: String, entry: Module0)
+}
+
+pub type Module0 {
+  Module0(path: String, subs: List(Module0), files: List(String))
+}
+
+pub type Library1 {
+  Library1(path: String, entry: Module1)
+}
+
+pub type Module1 {
+  Module1(
+    path: String,
+    subs: List(Module1),
+    files: List(String),
+    ast: List(Stmt1),
+  )
+}
+
+pub type Library2 {
+  Library2(path: String, entry: Module2)
+}
+
+pub type Module2 {
+  Module2(
+    path: String,
+    subs: List(Module2),
+    files: List(String),
+    ast: List(Stmt2),
+  )
+}
+
+pub type Library3 {
+  Library3(path: String, entry: Module3)
+}
+
+pub type Module3 {
+  Module3(
+    path: String,
+    subs: List(Module3),
+    files: List(String),
+    ast: List(Stmt3),
+  )
+}
+
+pub type Library4 {
+  Library4(path: String, entry: Module4)
+}
+
+pub type Module4 {
+  Module4(
+    path: String,
+    subs: List(Module4),
+    files: List(String),
+    ast: List(Stmt4),
+  )
+}
+
 pub type Error {
   CouldntOpenFile(String)
-  ParseError(ParseError(Nil))
-  Undefined(Position, String)
+  ParseError(String, ParseError(Nil))
+  Undefined(String, Position, String)
   TypeError(Position, Expr3, Expr3)
   CallingNonFunction(Expr3)
   CallingNonForall(Expr3)
@@ -19,9 +79,10 @@ pub fn pretty_err(e: Error) -> String {
   case e {
     CouldntOpenFile(r) ->
       "Error! Couldn't open the Saber file! Reason: " <> string.inspect(r)
-    ParseError(p) -> "Parse error! " <> string.inspect(p)
-    Undefined(pos, s) ->
-      "Error! Undefined variable " <> s <> " at " <> string.inspect(pos)
+    ParseError(path, p) ->
+      "Parse error! " <> string.inspect(p) <> " in " <> path
+    Undefined(path, pos, s) ->
+      "Error! Undefined variable " <> s <> " at " <> string.inspect(pos) <> " in " <> path
     TypeError(pos, t1, t2) ->
       "Type error! Couldn't unify " <> pretty_expr3(t1) <> " and " <> pretty_expr3(
         t2,
@@ -45,8 +106,9 @@ pub fn pretty_err(e: Error) -> String {
 
 pub type Expr1 {
   Int1(pos: Position, val: Int)
-  Ident1(pos: Position, name: String)
+  Ident1(pos: Position, path: String, name: String)
   Builtin1(pos: Position, name: String)
+  DotAccess1(pos: Position, expr: Expr1, name: String)
   Func1(
     pos: Position,
     implicit_args: List(String),
@@ -65,6 +127,7 @@ pub type Expr1 {
 
 pub type Stmt1 {
   Def1(pos: Position, name: String, val: Expr1)
+  Import1(pos: Position, name: String)
 }
 
 pub type Id =
@@ -74,6 +137,7 @@ pub type Expr2 {
   Int2(pos: Position, val: Int)
   Ident2(pos: Position, id: Id)
   Builtin2(pos: Position, name: String)
+  DotAccess2(pos: Position, expr: Expr2, name: String)
   Func2(
     pos: Position,
     implicit_args: List(Id),
@@ -94,12 +158,14 @@ pub type Expr2 {
 
 pub type Stmt2 {
   Def2(pos: Position, name: Id, val: Expr2)
+  Import2(pos: Position, name: String)
 }
 
 pub type Expr3 {
   Int3(pos: Position, val: Int)
   Ident3(pos: Position, t: Expr3, id: Id)
   Builtin3(pos: Position, t: Expr3, name: String)
+  DotAccess3(pos: Position, t: Expr3, expr: Expr3, name: String)
   Func3(
     pos: Position,
     t: Expr3,
@@ -128,6 +194,7 @@ pub fn pretty_expr3(e: Expr3) -> String {
     Int3(_, i) -> to_string(i)
     Ident3(_, _, id) -> "x" <> to_string(id)
     Builtin3(_, _, name) -> name
+    DotAccess3(_, _, e, field) -> pretty_expr3(e) <> "." <> field
     Func3(_, _, [], args, body) ->
       "fn(" <> {
         args
@@ -219,6 +286,9 @@ pub fn contains3(e: Expr3, id: Id) -> Bool {
   let c = contains3(_, id)
   case e {
     Ident3(_, _, x) if x == id -> True
+    Ident3(_, t, _) -> c(t)
+    Builtin3(_, t, _) -> c(t)
+    DotAccess3(_, t, e2, _) -> c(t) || c(e2)
     Func3(_, t, _, args, body) ->
       c(t) || list.any(args, fn(a) { c(a.1) }) || c(body)
     App3(_, t, func, args) -> c(t) || c(func) || list.any(args, c)
@@ -235,6 +305,7 @@ pub fn substitute(id: Id, new: Expr3, t: Expr3) -> Expr3 {
     Ident3(_, _, x) if id == x -> new
     Builtin3(_, _, _) -> t
     Ident3(_, _, _) -> t
+    DotAccess3(pos, t, e, field) -> DotAccess3(pos, sub(t), sub(e), field)
     Func3(pos, t, imp_args, args, body) ->
       case list.contains(imp_args, id) || list.any(args, fn(a) { a.0 == id }) {
         True -> t
@@ -277,6 +348,7 @@ fn swap_ident(id: Id, new: Id, t: Expr3) -> Expr3 {
     Ident3(pos, t, x) if id == x -> Ident3(pos, t, new)
     Ident3(_, _, _) -> t
     Builtin3(_, _, _) -> t
+    DotAccess3(pos, t, e, field) -> DotAccess3(pos, sub(t), sub(e), field)
     Func3(pos, t, imp_args, args, body) ->
       case
         list.contains(imp_args, new) || list.any(args, fn(a) { a.0 == new })
@@ -318,6 +390,8 @@ pub fn type_eq(t1: Expr3, t2: Expr3) -> Bool {
   case t1, t2 {
     Ident3(_, _, id1), Ident3(_, _, id2) if id1 == id2 -> True
     Builtin3(_, _, name1), Builtin3(_, _, name2) if name1 == name2 -> True
+    DotAccess3(_, _, e1, field1), DotAccess3(_, _, e2, field2) ->
+      type_eq(e1, e2) && field1 == field2
     TPi3(_, imp_args1, args1, body1), TPi3(_, imp_args2, args2, body2) ->
       list.length(imp_args1) == list.length(imp_args2) && list.length(args1) == list.length(
         args2,
@@ -347,6 +421,7 @@ pub fn type_eq(t1: Expr3, t2: Expr3) -> Bool {
 
 pub type Stmt3 {
   Def3(pos: Position, id: Id, val: Expr3)
+  Import3(pos: Position, name: String)
 }
 
 pub fn pretty_stmt3(s: Stmt3) -> String {
@@ -355,6 +430,7 @@ pub fn pretty_stmt3(s: Stmt3) -> String {
       "def x" <> to_string(id) <> ": " <> pretty_expr3(typeof(val)) <> " = " <> pretty_expr3(
         val,
       )
+    Import3(_, name) -> "import " <> name
   }
 }
 
@@ -363,6 +439,7 @@ pub fn typeof(e: Expr3) -> Expr3 {
     Int3(pos, _) -> Builtin3(pos, TType3(pos), "int")
     Ident3(_, t, _) -> t
     Builtin3(_, t, _) -> t
+    DotAccess3(_, t, _, _) -> t
     Func3(_, t, _, _, _) -> t
     App3(_, t, _, _) -> t
     Downcast3(_, _, _, t) -> t
@@ -380,6 +457,7 @@ pub type Expr4 {
   Int4(pos: Position, val: Int)
   Ident4(pos: Position, t: Expr4, id: Id)
   Builtin4(pos: Position, t: Expr4, name: String)
+  DotAccess4(pos: Position, t: Expr4, expr: Expr4, field: String)
   Func4(pos: Position, t: Expr4, args: List(#(Id, Expr4)), body: Expr4)
   App4(pos: Position, t: Expr4, func: Expr4, args: List(Expr4))
   Upcast4(pos: Position, e: Expr4, from: Expr4, to: Expr4)
@@ -394,6 +472,7 @@ pub type Expr4 {
 
 pub type Stmt4 {
   Def4(pos: Position, id: Id, val: Expr4)
+  Import4(pos: Position, name: String)
 }
 
 pub fn pretty_expr(e: Expr4) -> String {
@@ -401,6 +480,7 @@ pub fn pretty_expr(e: Expr4) -> String {
     Int4(_, i) -> to_string(i)
     Ident4(_, _, id) -> "x" <> to_string(id)
     Builtin4(_, _, name) -> name
+    DotAccess4(_, _, e2, field) -> pretty_expr(e2) <> "." <> field
     Func4(_, _, args, body) ->
       "fn(" <> {
         args
@@ -462,5 +542,6 @@ pub fn contains(e: Expr4, id: Id) -> Bool {
 pub fn pretty_stmt(s: Stmt4) -> String {
   case s {
     Def4(_, id, val) -> "def x" <> to_string(id) <> " = " <> pretty_expr(val)
+    Import4(_, name) -> "import " <> name
   }
 }

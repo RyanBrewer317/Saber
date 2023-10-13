@@ -1,0 +1,6 @@
+name = "main"
+version = "0.0.1"
+description = "the first saber package"
+
+[dependencies]
+saber_stdlib = ">= 0.0.1"

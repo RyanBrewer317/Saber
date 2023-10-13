@@ -1,0 +1,3 @@
+def first = fn<a, b>(x: a, y: b) x
+def second = fn<a, b>(x: a, y: b) y
+def id = fn<a>(x: a) x

@@ -69,7 +69,11 @@ pub fn fmap(ma: Monad(a), f: fn(a) -> b) -> Monad(b) {
   })
 }
 
-pub fn reduce(l: List(a), base: b, f: fn(a, b) -> Monad(b)) -> Monad(b) {
+pub fn reduce(
+  over l: List(a),
+  from base: b,
+  with f: fn(a, b) -> Monad(b),
+) -> Monad(b) {
   case l {
     [] -> return(base)
     [x, ..xs] -> {

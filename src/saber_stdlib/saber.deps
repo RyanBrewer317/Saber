@@ -1,0 +1,5 @@
+name = "saber_stdlib"
+version = "0.0.1"
+description = "the Saber standard library"
+
+[dependencies]

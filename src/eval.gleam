@@ -1,6 +1,7 @@
 import core.{
-  App4, Builtin4, Def4, Downcast4, Expr4, Func4, Id, Ident4, Int4, Stmt4,
-  TDynamic4, TKind4, TLabelKind4, TLabelType4, TPi4, TType4, Upcast4,
+  App4, Builtin4, Def4, DotAccess4, Downcast4, Expr4, Func4, Id, Ident4, Import4,
+  Int4, Library4, Module4, Stmt4, TDynamic4, TKind4, TLabelKind4, TLabelType4,
+  TPi4, TType4, Upcast4,
 }
 import monad.{Monad, do, return}
 import gleam/list
@@ -9,14 +10,24 @@ import gleam/string
 import gleam/io
 import gleam/map.{Map, get, insert}
 
+type Library =
+  Library4
+
+type Module =
+  Module4
+
 type Stmt =
   Stmt4
 
 type Expr =
   Expr4
 
-pub fn go(ast: List(Stmt)) -> Monad(Expr) {
-  let assert [s, ..ss] = ast
+pub fn eval_lib(lib: Library) -> Monad(Expr) {
+  eval_mod(lib.entry)
+}
+
+fn eval_mod(mod: Module) -> Monad(Expr) {
+  let assert [s, ..ss] = mod.ast
   use #(b, id) <- do(stmt(s, map.new()))
   use #(res, _) <- do(monad.reduce(ss, #(b, insert(map.new(), id, b)), iteratee))
   return(res)
@@ -37,6 +48,7 @@ fn stmt(s: Stmt, heap: Map(Id, Expr)) -> Monad(#(Expr, Id)) {
       use val2 <- do(expr(val, insert(heap, id, val)))
       return(#(val2, id))
     }
+    Import4(_, _) -> todo
   }
 }
 
@@ -57,6 +69,7 @@ fn expr(e: Expr, heap: Map(Id, Expr)) -> Monad(Expr) {
       use t2 <- do(expr(t, heap))
       return(Builtin4(p, t2, n))
     }
+    DotAccess4(_, _, e2, field) -> todo
     // no eta reduction
     Func4(p, t, args, body) -> {
       use t2 <- do(expr(t, heap))
