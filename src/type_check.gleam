@@ -1,13 +1,13 @@
 import monad.{Monad, do, return}
 import core.{
   App2, App3, Builtin2, Builtin3, CallingNonFunction, CallingWrongArity, Def2,
-  Def3, DotAccess2, Downcast3, Expr2, Expr3, Func2, Func3, Id, Ident2, Ident3,
-  Import2, Import3, Int2, Int3, Library2, Library3, Module2, Module3, Stmt2,
-  Stmt3, TDynamic2, TDynamic3, TLabelType2, TLabelType3, TPi2, TPi3, TType2,
-  TType3, TypeError, Upcast3, contains3, substitute, type_eq, typeof,
+  Def3, DotAccess2, Downcast3, Expr2, Expr3, Func2, Func3, Global, Id, Ident,
+  Ident2, Ident3, Import2, Import3, Int2, Int3, Library2, Library3, Local,
+  Module2, Module3, Stmt2, Stmt3, TDynamic2, TDynamic3, TLabelType2, TLabelType3,
+  TPi2, TPi3, TType2, TType3, TypeError, Upcast3, contains3, ident_to_str,
+  substitute, type_eq, typeof,
 }
 import gleam/map.{Map, get, insert}
-import gleam/int.{to_string}
 import gleam/result
 import gleam/list
 
@@ -17,46 +17,74 @@ pub fn annotate_lib(lib2: Library2) -> Monad(Library3) {
 }
 
 fn annotate_mod(mod2: Module2) -> Monad(Module3) {
-  use #(ast, _) <- do(monad.reduce(mod2.ast, #([], map.new()), iteratee))
+  use #(ast, gamma) <- do(monad.reduce(
+    mod2.ast,
+    #([], map.new()),
+    fn(s, so_far) {
+      let #(ast, gamma) = so_far
+      use #(s2, gamma2) <- do(stmt(s, gamma, mod2.symbol_table))
+      return(#([s2, ..ast], gamma2))
+    },
+  ))
   use subs <- do(monad.map(mod2.subs, annotate_mod))
-  return(Module3(mod2.path, subs, mod2.files, list.reverse(ast)))
+  let symbol_table =
+    map.map_values(
+      mod2.symbol_table,
+      fn(_, v) { monad.unwrap(expr(gamma, v, mod2.symbol_table)) },
+    )
+  return(Module3(mod2.path, subs, symbol_table, mod2.files, list.reverse(ast)))
 }
 
-fn iteratee(s: Stmt2, so_far: #(List(Stmt3), Map(Id, Expr3))) {
-  let #(ast, gamma) = so_far
-  use #(s2, gamma2) <- do(stmt(s, gamma))
-  return(#([s2, ..ast], gamma2))
-}
-
-fn stmt(s: Stmt2, gamma: Map(Id, Expr3)) -> Monad(#(Stmt3, Map(Id, Expr3))) {
+fn stmt(
+  s: Stmt2,
+  gamma: Map(Ident, Expr3),
+  symbol_table: Map(String, Expr2),
+) -> Monad(#(Stmt3, Map(Ident, Expr3))) {
   case s {
-    Def2(p, id, val) -> {
+    Def2(p, name, val) -> {
       use val2 <- do(
         gamma
-        |> expr(val),
+        |> expr(val, symbol_table),
       )
-      return(#(Def3(p, id, val2), insert(gamma, id, typeof(val2))))
+      return(#(Def3(p, name, val2), insert(gamma, Global(name), typeof(val2))))
     }
     Import2(p, name) -> return(#(Import3(p, name), gamma))
   }
 }
 
-fn expr(gamma: Map(Id, Expr3), e: Expr2) -> Monad(Expr3) {
+fn expr(
+  gamma: Map(Ident, Expr3),
+  e: Expr2,
+  symbol_table: Map(String, Expr2),
+) -> Monad(Expr3) {
   case e {
     TType2(p) -> return(TType3(p))
     Ident2(p, id) ->
       case get(gamma, id) {
         Ok(t) -> return(Ident3(p, t, id))
         Error(Nil) ->
-          panic(
-            "undefined variable " <> to_string(id) <> " during typechecking",
-          )
+          case id {
+            Local(_) ->
+              panic(
+                "undefined local variable " <> ident_to_str(id) <> " during typechecking",
+              )
+            Global(name) ->
+              case map.get(symbol_table, name) {
+                Ok(t) ->
+                  monad.fmap(expr(gamma, t, symbol_table), Ident3(p, _, id))
+                Error(Nil) ->
+                  panic(
+                    "undefined global variable " <> ident_to_str(id) <> " during typechecking",
+                  )
+              }
+          }
       }
+
     App2(p, func, args) -> {
       // prove gamma |- func2: typeof(func2)
       use func2 <- do(
         gamma
-        |> expr(func),
+        |> expr(func, symbol_table),
       )
       case typeof(func2) {
         TPi3(_, imp_args, formal_args, ret_t) -> {
@@ -64,7 +92,7 @@ fn expr(gamma: Map(Id, Expr3), e: Expr2) -> Monad(Expr3) {
             list.length(formal_args) == list.length(args),
             monad.fail(CallingWrongArity(p, typeof(func2), list.length(args))),
           )
-          use args2 <- do(monad.map(args, expr(gamma, _)))
+          use args2 <- do(monad.map(args, expr(gamma, _, symbol_table)))
           let solutions = solve(imp_args, formal_args, args2)
           use supplied_imp_args <- do(monad.map(
             imp_args,
@@ -116,7 +144,7 @@ fn expr(gamma: Map(Id, Expr3), e: Expr2) -> Monad(Expr3) {
           ))
         }
         TDynamic3(p) -> {
-          use args2 <- do(monad.map(args, expr(gamma, _)))
+          use args2 <- do(monad.map(args, expr(gamma, _, symbol_table)))
           return(App3(
             p,
             TDynamic3(p),
@@ -141,15 +169,18 @@ fn expr(gamma: Map(Id, Expr3), e: Expr2) -> Monad(Expr3) {
     Builtin2(p, "int") -> return(Builtin3(p, TType3(p), "int"))
     Func2(p, imp_args, args, body) -> {
       let gamma2 =
-        list.fold(imp_args, gamma, fn(g, a) { insert(g, a, TType3(p)) })
+        list.fold(imp_args, gamma, fn(g, a) { insert(g, Local(a), TType3(p)) })
       use args2 <- do(monad.map(
         args,
-        fn(a) { monad.fmap(expr(gamma2, a.1), fn(a2) { #(a.0, a2) }) },
+        fn(a) {
+          monad.fmap(expr(gamma2, a.1, symbol_table), fn(a2) { #(a.0, a2) })
+        },
       ))
-      let gamma3 = list.fold(args2, gamma2, fn(g, a) { insert(g, a.0, a.1) })
+      let gamma3 =
+        list.fold(args2, gamma2, fn(g, a) { insert(g, Local(a.0), a.1) })
       use body2 <- do(
         gamma3
-        |> expr(body),
+        |> expr(body, symbol_table),
       )
       return(Func3(
         p,
@@ -161,15 +192,18 @@ fn expr(gamma: Map(Id, Expr3), e: Expr2) -> Monad(Expr3) {
     }
     TPi2(p, imp_args, args, body) -> {
       let gamma2 =
-        list.fold(imp_args, gamma, fn(g, a) { insert(g, a, TType3(p)) })
+        list.fold(imp_args, gamma, fn(g, a) { insert(g, Local(a), TType3(p)) })
       use args2 <- do(monad.map(
         args,
-        fn(a) { monad.fmap(expr(gamma2, a.1), fn(a2) { #(a.0, a2) }) },
+        fn(a) {
+          monad.fmap(expr(gamma2, a.1, symbol_table), fn(a2) { #(a.0, a2) })
+        },
       ))
-      let gamma3 = list.fold(args2, gamma2, fn(g, a) { insert(g, a.0, a.1) })
+      let gamma3 =
+        list.fold(args2, gamma2, fn(g, a) { insert(g, Local(a.0), a.1) })
       use body2 <- do(
         gamma3
-        |> expr(body),
+        |> expr(body, symbol_table),
       )
       return(TPi3(p, imp_args, args2, body2))
     }
@@ -367,7 +401,7 @@ fn solve(
     [], [] -> map.new()
     [#(_, t), ..rest], [a, ..rest2] ->
       case t {
-        Ident3(_, _, id) ->
+        Ident3(_, _, Local(id)) ->
           case
             imp_args
             |> list.contains(id)
@@ -386,7 +420,7 @@ fn solve(
 fn instantiate(solutions: Map(Id, Expr3), t: Expr3) -> Expr3 {
   let i = instantiate(solutions, _)
   case t {
-    Ident3(_, _, id) ->
+    Ident3(_, _, Local(id)) ->
       solutions
       |> map.get(id)
       |> result.unwrap(or: t)

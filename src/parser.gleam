@@ -6,8 +6,9 @@ import gleam/string
 import gleam/int
 import gleam/result
 import gleam/list
-import party as p
 import gleam/io
+import gleam/map.{Map}
+import party as p
 import monad.{Monad, do, return}
 import simplifile
 
@@ -26,8 +27,13 @@ fn parse_module(mod: Module0) -> Monad(Module1) {
     parse(mod.path <> "/" <> filename, code)
   })
   use subs <- do(monad.map(mod.subs, parse_module))
-  io.debug(#(mod.path, list.concat(parses)))
-  return(Module1(mod.path, subs, mod.files, list.concat(parses)))
+  let #(ast, symbol_table) =
+    list.fold(
+      parses,
+      #([], map.new()),
+      fn(curr, new) { #(list.append(new.0, curr.0), map.merge(curr.1, new.1)) },
+    )
+  return(Module1(mod.path, subs, symbol_table, mod.files, list.reverse(ast)))
 }
 
 fn intlit() -> p.Parser(Expr1, Nil) {
@@ -217,16 +223,16 @@ fn expr(path: String) -> fn() -> p.Parser(Expr1, Nil) {
   }
 }
 
-fn import_stmt() -> p.Parser(Stmt1, e) {
+fn import_stmt(path) -> p.Parser(#(Stmt1, String, Expr1), e) {
   use pos <- p.do(p.pos())
   use _ <- p.do(p.string("import"))
   use _ <- p.do(p.not(p.alt(p.alphanum(), p.char("_"))))
   use _ <- p.do(ws())
   use name <- p.do(identstring())
-  p.return(Import1(pos, name))
+  p.return(#(Import1(pos, name), name, Ident1(pos, path, "dyn")))
 }
 
-fn def(path: String) -> p.Parser(Stmt1, Nil) {
+fn def(path: String) -> p.Parser(#(Stmt1, String, Expr1), Nil) {
   use _ <- p.do(ws())
   use pos <- p.do(p.pos())
   use _ <- p.do(p.string("def"))
@@ -236,19 +242,28 @@ fn def(path: String) -> p.Parser(Stmt1, Nil) {
   use _ <- p.do(ws())
   use _ <- p.do(p.char("="))
   use body <- p.do(expr(path)())
-  p.return(Def1(pos, name, body))
+  p.return(#(Def1(pos, name, body), name, Ident1(pos, path, "dyn")))
 }
 
-fn stmt(path: String) -> p.Parser(Stmt1, Nil) {
-  p.choice([def(path), import_stmt()])
+fn stmt(path: String) -> p.Parser(#(Stmt1, String, Expr1), Nil) {
+  p.choice([def(path), import_stmt(path)])
 }
 
-fn parse(path: String, src: String) -> monad.Monad(List(Stmt1)) {
+fn parse(
+  path: String,
+  src: String,
+) -> monad.Monad(#(List(Stmt1), Map(String, Expr1))) {
   p.go(
     {
-      use e <- p.do(p.many1(stmt(path)))
+      use res <- p.do(p.many1(stmt(path)))
       use _ <- p.do(p.end())
-      p.return(e)
+      let #(stmts, symbol_table) =
+        list.fold(
+          res,
+          #([], map.new()),
+          fn(curr, r) { #([r.0, ..curr.0], map.insert(curr.1, r.1, r.2)) },
+        )
+      p.return(#(stmts, symbol_table))
     },
     src,
   )

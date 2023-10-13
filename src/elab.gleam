@@ -7,6 +7,7 @@ import core.{
 }
 import monad.{Monad, do, return}
 import gleam/list
+import gleam/map
 
 pub fn elaborate_lib(lib3: Library3) -> Monad(Library4) {
   use entry <- do(elaborate_mod(lib3.entry))
@@ -16,7 +17,9 @@ pub fn elaborate_lib(lib3: Library3) -> Monad(Library4) {
 fn elaborate_mod(mod3: Module3) -> Monad(Module4) {
   use #(ast) <- do(monad.reduce(mod3.ast, #([]), iteratee))
   use subs <- do(monad.map(mod3.subs, elaborate_mod))
-  return(Module4(mod3.path, subs, mod3.files, list.reverse(ast)))
+  let symbol_table =
+    map.map_values(mod3.symbol_table, fn(_, v) { monad.unwrap(expr(v)) })
+  return(Module4(mod3.path, subs, symbol_table, mod3.files, list.reverse(ast)))
 }
 
 fn iteratee(s: Stmt3, so_far: #(List(Stmt4))) -> Monad(#(List(Stmt4))) {

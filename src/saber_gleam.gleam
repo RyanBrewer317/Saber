@@ -49,8 +49,8 @@ pub fn main() {
     use lib2 <- do(ast.build_lib(lib1))
     use lib3 <- do(type_check.annotate_lib(lib2))
     use lib4 <- do(elab.elaborate_lib(lib3))
-    use result <- do(eval.eval_lib(lib4))
-    return(result)
+    use rslt <- do(eval.eval_lib(lib4))
+    return(rslt)
   }
   case monad.run(m) {
     Ok(e) -> {

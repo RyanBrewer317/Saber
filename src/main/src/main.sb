@@ -1,4 +1,4 @@
-import main2
+//import main2
 
 def test1 = (fn(f) f(7))(fn(n: int) n) // returns 7, the first function has type dyn->dyn
 

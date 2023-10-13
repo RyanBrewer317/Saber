@@ -1,6 +1,7 @@
 import gleam/int.{to_string}
 import gleam/string
 import gleam/list
+import gleam/map.{Map}
 import party.{ParseError, Position}
 
 pub type Library0 {
@@ -19,6 +20,7 @@ pub type Module1 {
   Module1(
     path: String,
     subs: List(Module1),
+    symbol_table: Map(String, Expr1),
     files: List(String),
     ast: List(Stmt1),
   )
@@ -32,6 +34,7 @@ pub type Module2 {
   Module2(
     path: String,
     subs: List(Module2),
+    symbol_table: Map(String, Expr2),
     files: List(String),
     ast: List(Stmt2),
   )
@@ -45,6 +48,7 @@ pub type Module3 {
   Module3(
     path: String,
     subs: List(Module3),
+    symbol_table: Map(String, Expr3),
     files: List(String),
     ast: List(Stmt3),
   )
@@ -58,6 +62,7 @@ pub type Module4 {
   Module4(
     path: String,
     subs: List(Module4),
+    symbol_table: Map(String, Expr4),
     files: List(String),
     ast: List(Stmt4),
   )
@@ -104,6 +109,18 @@ pub fn pretty_err(e: Error) -> String {
   }
 }
 
+pub type Ident {
+  Local(name: Id)
+  Global(name: String)
+}
+
+pub fn ident_to_str(i: Ident) -> String {
+  case i {
+    Local(id) -> "x" <> int.to_string(id)
+    Global(name) -> name
+  }
+}
+
 pub type Expr1 {
   Int1(pos: Position, val: Int)
   Ident1(pos: Position, path: String, name: String)
@@ -135,7 +152,7 @@ pub type Id =
 
 pub type Expr2 {
   Int2(pos: Position, val: Int)
-  Ident2(pos: Position, id: Id)
+  Ident2(pos: Position, id: Ident)
   Builtin2(pos: Position, name: String)
   DotAccess2(pos: Position, expr: Expr2, name: String)
   Func2(
@@ -157,13 +174,13 @@ pub type Expr2 {
 }
 
 pub type Stmt2 {
-  Def2(pos: Position, name: Id, val: Expr2)
+  Def2(pos: Position, name: String, val: Expr2)
   Import2(pos: Position, name: String)
 }
 
 pub type Expr3 {
   Int3(pos: Position, val: Int)
-  Ident3(pos: Position, t: Expr3, id: Id)
+  Ident3(pos: Position, t: Expr3, id: Ident)
   Builtin3(pos: Position, t: Expr3, name: String)
   DotAccess3(pos: Position, t: Expr3, expr: Expr3, name: String)
   Func3(
@@ -192,7 +209,8 @@ pub type Expr3 {
 pub fn pretty_expr3(e: Expr3) -> String {
   case e {
     Int3(_, i) -> to_string(i)
-    Ident3(_, _, id) -> "x" <> to_string(id)
+    Ident3(_, _, Local(id)) -> "x" <> to_string(id)
+    Ident3(_, _, Global(name)) -> name
     Builtin3(_, _, name) -> name
     DotAccess3(_, _, e, field) -> pretty_expr3(e) <> "." <> field
     Func3(_, _, [], args, body) ->
@@ -285,7 +303,7 @@ pub fn pretty_expr3(e: Expr3) -> String {
 pub fn contains3(e: Expr3, id: Id) -> Bool {
   let c = contains3(_, id)
   case e {
-    Ident3(_, _, x) if x == id -> True
+    Ident3(_, _, Local(x)) if x == id -> True
     Ident3(_, t, _) -> c(t)
     Builtin3(_, t, _) -> c(t)
     DotAccess3(_, t, e2, _) -> c(t) || c(e2)
@@ -302,7 +320,8 @@ pub fn substitute(id: Id, new: Expr3, t: Expr3) -> Expr3 {
   let sub = substitute(id, new, _)
   case t {
     Int3(_, _) -> t
-    Ident3(_, _, x) if id == x -> new
+    Ident3(_, _, Local(x)) if id == x -> new
+    Ident3(_, _, _) -> t
     Builtin3(_, _, _) -> t
     Ident3(_, _, _) -> t
     DotAccess3(pos, t, e, field) -> DotAccess3(pos, sub(t), sub(e), field)
@@ -345,7 +364,8 @@ fn swap_ident(id: Id, new: Id, t: Expr3) -> Expr3 {
   let sub = swap_ident(id, new, _)
   case t {
     Int3(_, _) -> t
-    Ident3(pos, t, x) if id == x -> Ident3(pos, t, new)
+    Ident3(pos, t, Local(x)) if id == x -> Ident3(pos, t, Local(new))
+    Ident3(_, _, _) -> t
     Ident3(_, _, _) -> t
     Builtin3(_, _, _) -> t
     DotAccess3(pos, t, e, field) -> DotAccess3(pos, sub(t), sub(e), field)
@@ -420,14 +440,14 @@ pub fn type_eq(t1: Expr3, t2: Expr3) -> Bool {
 }
 
 pub type Stmt3 {
-  Def3(pos: Position, id: Id, val: Expr3)
+  Def3(pos: Position, id: String, val: Expr3)
   Import3(pos: Position, name: String)
 }
 
 pub fn pretty_stmt3(s: Stmt3) -> String {
   case s {
-    Def3(_, id, val) ->
-      "def x" <> to_string(id) <> ": " <> pretty_expr3(typeof(val)) <> " = " <> pretty_expr3(
+    Def3(_, name, val) ->
+      "def x" <> name <> ": " <> pretty_expr3(typeof(val)) <> " = " <> pretty_expr3(
         val,
       )
     Import3(_, name) -> "import " <> name
@@ -455,7 +475,7 @@ pub fn typeof(e: Expr3) -> Expr3 {
 
 pub type Expr4 {
   Int4(pos: Position, val: Int)
-  Ident4(pos: Position, t: Expr4, id: Id)
+  Ident4(pos: Position, t: Expr4, id: Ident)
   Builtin4(pos: Position, t: Expr4, name: String)
   DotAccess4(pos: Position, t: Expr4, expr: Expr4, field: String)
   Func4(pos: Position, t: Expr4, args: List(#(Id, Expr4)), body: Expr4)
@@ -471,14 +491,15 @@ pub type Expr4 {
 }
 
 pub type Stmt4 {
-  Def4(pos: Position, id: Id, val: Expr4)
+  Def4(pos: Position, id: String, val: Expr4)
   Import4(pos: Position, name: String)
 }
 
 pub fn pretty_expr(e: Expr4) -> String {
   case e {
     Int4(_, i) -> to_string(i)
-    Ident4(_, _, id) -> "x" <> to_string(id)
+    Ident4(_, _, Local(id)) -> "x" <> to_string(id)
+    Ident4(_, _, Global(name)) -> name
     Builtin4(_, _, name) -> name
     DotAccess4(_, _, e2, field) -> pretty_expr(e2) <> "." <> field
     Func4(_, _, args, body) ->
@@ -529,7 +550,7 @@ pub fn pretty_expr(e: Expr4) -> String {
 pub fn contains(e: Expr4, id: Id) -> Bool {
   let c = contains(_, id)
   case e {
-    Ident4(_, _, x) if x == id -> True
+    Ident4(_, _, Local(x)) if x == id -> True
     Func4(_, t, args, body) ->
       c(t) || list.any(args, fn(a) { c(a.1) }) || c(body)
     App4(_, t, func, args) -> c(t) || c(func) || list.any(args, c)
@@ -541,7 +562,7 @@ pub fn contains(e: Expr4, id: Id) -> Bool {
 
 pub fn pretty_stmt(s: Stmt4) -> String {
   case s {
-    Def4(_, id, val) -> "def x" <> to_string(id) <> " = " <> pretty_expr(val)
+    Def4(_, name, val) -> "def " <> name <> " = " <> pretty_expr(val)
     Import4(_, name) -> "import " <> name
   }
 }

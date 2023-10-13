@@ -89,3 +89,11 @@ pub fn when(cond: Bool, ma: Monad(Nil)) -> Monad(Nil) {
     False -> return(Nil)
   }
 }
+
+pub fn unwrap(ma: Monad(a)) -> a {
+  let Monad(f) = ma
+  case f(0) {
+    Ok(#(val, _)) -> val
+    Error(_) -> panic("")
+  }
+}
