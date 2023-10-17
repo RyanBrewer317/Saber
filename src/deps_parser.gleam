@@ -1,6 +1,6 @@
 import party.{
-  Parser, alt, char, choice, digit, do, lazy, letter, many, many1, map, not,
-  perhaps, return, satisfy, seq, string as str,
+  Parser, alt, char, choice, digit, do, letter, many, many1, map, return,
+  satisfy,
 }
 import gleam/string.{concat}
 import gleam/int

@@ -49,13 +49,13 @@ pub fn main() {
     use lib2 <- do(ast.build_lib(lib1))
     use lib3 <- do(type_check.annotate_lib(lib2))
     use lib4 <- do(elab.elaborate_lib(lib3))
-    use rslt <- do(eval.eval_lib(lib4))
-    return(rslt)
+    use _ <- do(eval.eval_lib(lib4))
+    return(Nil)
   }
+  // use rslt <- do(eval.eval_lib(lib4))
+  // return(rslt)
   case monad.run(m) {
-    Ok(e) -> {
-      ">> " <> pretty_expr(e)
-    }
+    Ok(Nil) -> "ok"
     Error(e) -> pretty_err(e)
   }
   |> io.println()

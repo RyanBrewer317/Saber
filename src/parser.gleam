@@ -1,6 +1,7 @@
 import core.{
-  App1, Builtin1, CouldntOpenFile, Def1, Error, Expr1, Func1, Ident1, Import1,
-  Int1, Library0, Library1, Module0, Module1, ParseError, Stmt1, TDynamic1, TPi1,
+  App1, Builtin1, CouldntOpenFile, Def1, DotAccess1, Error, Expr1, Func1, Ident1,
+  Import1, Int1, Library0, Library1, Module0, Module1, ParseError, Stmt1,
+  TDynamic1, TPi1,
 }
 import gleam/string
 import gleam/int
@@ -200,7 +201,7 @@ fn expr(path: String) -> fn() -> p.Parser(Expr1, Nil) {
     })))
     use _ <- p.do(ws())
     use res2 <- p.do(p.perhaps(p.string("->")))
-    case res, res2 {
+    use res <- p.do(case res, res2 {
       Ok(arg), Error(Nil) ->
         p.return(list.fold(arg, lit, fn(a, b) { App1(b.0, a, b.1) }))
       Ok(arg), Ok(_) -> {
@@ -219,6 +220,17 @@ fn expr(path: String) -> fn() -> p.Parser(Expr1, Nil) {
         p.return(TPi1(pos, [], [#("_", lit)], lit2))
       }
       Error(Nil), Error(Nil) -> p.return(lit)
+    })
+    use _ <- p.do(ws())
+    use mb_dot <- p.do(p.perhaps(p.char(".")))
+    use _ <- p.do(ws())
+    case mb_dot {
+      Ok(_) -> {
+        use _ <- p.do(ws())
+        use fieldname <- p.do(identstring())
+        p.return(DotAccess1(pos, res, fieldname))
+      }
+      Error(Nil) -> p.return(res)
     }
   }
 }
@@ -240,9 +252,18 @@ fn def(path: String) -> p.Parser(#(Stmt1, String, Expr1), Nil) {
   use _ <- p.do(ws())
   use name <- p.do(identstring())
   use _ <- p.do(ws())
+  use mb_colon <- p.do(p.perhaps(p.char(":")))
+  use t <- p.do(case mb_colon {
+    Ok(_) -> {
+      use _ <- p.do(ws())
+      use t <- p.do(expr(path)())
+      p.return(t)
+    }
+    Error(Nil) -> p.return(Ident1(pos, path, "dyn"))
+  })
   use _ <- p.do(p.char("="))
   use body <- p.do(expr(path)())
-  p.return(#(Def1(pos, name, body), name, Ident1(pos, path, "dyn")))
+  p.return(#(Def1(pos, name, body), name, t))
 }
 
 fn stmt(path: String) -> p.Parser(#(Stmt1, String, Expr1), Nil) {

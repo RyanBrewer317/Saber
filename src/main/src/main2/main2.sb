@@ -1,3 +1,4 @@
-def first = fn<a, b>(x: a, y: b) x
-def second = fn<a, b>(x: a, y: b) y
-def id = fn<a>(x: a) x
+def first:  Pi<a,b>(x:a,y:b) a = fn<a, b>(x: a, y: b) x
+def second: Pi<a,b>(x:a,y:b) b = fn<a, b>(x: a, y: b) y
+def id: Pi<a>(x: a) a = fn<a>(x: a) x
+def hi: int = 9

@@ -1,9 +1,9 @@
 import core.{
-  App3, App4, Builtin3, Builtin4, Def3, Def4, DotAccess3, DotAccess4, Downcast3,
-  Downcast4, Expr3, Expr4, Func3, Func4, Ident3, Ident4, Import3, Import4, Int3,
-  Int4, Library3, Library4, Module3, Module4, Stmt3, Stmt4, TDynamic3, TDynamic4,
-  TKind3, TKind4, TLabelKind3, TLabelKind4, TLabelType3, TLabelType4, TPi3, TPi4,
-  TType3, TType4, Upcast3, Upcast4,
+  App3, App4, Builtin3, Builtin4, Def3, Def4, Downcast3, Downcast4, Expr3, Expr4,
+  Func3, Func4, Ident3, Ident4, Import3, Import4, Int3, Int4, Library3, Library4,
+  Module3, Module4, ModuleAccess3, ModuleAccess4, Stmt3, Stmt4, TDynamic3,
+  TDynamic4, TKind3, TKind4, TLabelKind3, TLabelKind4, TLabelType3, TLabelType4,
+  TPi3, TPi4, TType3, TType4, Upcast3, Upcast4,
 }
 import monad.{Monad, do, return}
 import gleam/list
@@ -46,10 +46,9 @@ fn expr(e: Expr3) -> Monad(Expr4) {
     Builtin3(p, t, name) ->
       expr(t)
       |> monad.fmap(Builtin4(p, _, name))
-    DotAccess3(p, t, e2, field) -> {
+    ModuleAccess3(p, t, module_name, field) -> {
       use t2 <- do(expr(t))
-      use e22 <- do(expr(e2))
-      return(DotAccess4(p, t2, e22, field))
+      return(ModuleAccess4(p, t2, module_name, field))
     }
     Func3(p, t, imp_args, args, body) -> {
       use t2 <- do(expr(t))

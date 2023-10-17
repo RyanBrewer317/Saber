@@ -154,7 +154,7 @@ pub type Expr2 {
   Int2(pos: Position, val: Int)
   Ident2(pos: Position, id: Ident)
   Builtin2(pos: Position, name: String)
-  DotAccess2(pos: Position, expr: Expr2, name: String)
+  ModuleAccess2(pos: Position, module: String, name: String)
   Func2(
     pos: Position,
     implicit_args: List(Id),
@@ -182,7 +182,7 @@ pub type Expr3 {
   Int3(pos: Position, val: Int)
   Ident3(pos: Position, t: Expr3, id: Ident)
   Builtin3(pos: Position, t: Expr3, name: String)
-  DotAccess3(pos: Position, t: Expr3, expr: Expr3, name: String)
+  ModuleAccess3(pos: Position, t: Expr3, module: String, name: String)
   Func3(
     pos: Position,
     t: Expr3,
@@ -212,7 +212,7 @@ pub fn pretty_expr3(e: Expr3) -> String {
     Ident3(_, _, Local(id)) -> "x" <> to_string(id)
     Ident3(_, _, Global(name)) -> name
     Builtin3(_, _, name) -> name
-    DotAccess3(_, _, e, field) -> pretty_expr3(e) <> "." <> field
+    ModuleAccess3(_, _, mod, field) -> mod <> "." <> field
     Func3(_, _, [], args, body) ->
       "fn(" <> {
         args
@@ -306,7 +306,7 @@ pub fn contains3(e: Expr3, id: Id) -> Bool {
     Ident3(_, _, Local(x)) if x == id -> True
     Ident3(_, t, _) -> c(t)
     Builtin3(_, t, _) -> c(t)
-    DotAccess3(_, t, e2, _) -> c(t) || c(e2)
+    ModuleAccess3(_, t, _, _) -> c(t)
     Func3(_, t, _, args, body) ->
       c(t) || list.any(args, fn(a) { c(a.1) }) || c(body)
     App3(_, t, func, args) -> c(t) || c(func) || list.any(args, c)
@@ -324,7 +324,8 @@ pub fn substitute(id: Id, new: Expr3, t: Expr3) -> Expr3 {
     Ident3(_, _, _) -> t
     Builtin3(_, _, _) -> t
     Ident3(_, _, _) -> t
-    DotAccess3(pos, t, e, field) -> DotAccess3(pos, sub(t), sub(e), field)
+    ModuleAccess3(pos, t, name, field) ->
+      ModuleAccess3(pos, sub(t), name, field)
     Func3(pos, t, imp_args, args, body) ->
       case list.contains(imp_args, id) || list.any(args, fn(a) { a.0 == id }) {
         True -> t
@@ -368,7 +369,8 @@ fn swap_ident(id: Id, new: Id, t: Expr3) -> Expr3 {
     Ident3(_, _, _) -> t
     Ident3(_, _, _) -> t
     Builtin3(_, _, _) -> t
-    DotAccess3(pos, t, e, field) -> DotAccess3(pos, sub(t), sub(e), field)
+    ModuleAccess3(pos, t, name, field) ->
+      ModuleAccess3(pos, sub(t), name, field)
     Func3(pos, t, imp_args, args, body) ->
       case
         list.contains(imp_args, new) || list.any(args, fn(a) { a.0 == new })
@@ -410,8 +412,8 @@ pub fn type_eq(t1: Expr3, t2: Expr3) -> Bool {
   case t1, t2 {
     Ident3(_, _, id1), Ident3(_, _, id2) if id1 == id2 -> True
     Builtin3(_, _, name1), Builtin3(_, _, name2) if name1 == name2 -> True
-    DotAccess3(_, _, e1, field1), DotAccess3(_, _, e2, field2) ->
-      type_eq(e1, e2) && field1 == field2
+    ModuleAccess3(_, _, name1, field1), ModuleAccess3(_, _, name2, field2) ->
+      name1 == name2 && field1 == field2
     TPi3(_, imp_args1, args1, body1), TPi3(_, imp_args2, args2, body2) ->
       list.length(imp_args1) == list.length(imp_args2) && list.length(args1) == list.length(
         args2,
@@ -430,7 +432,11 @@ pub fn type_eq(t1: Expr3, t2: Expr3) -> Bool {
         ),
         body1,
       )
-    App3(_, _, _, _), App3(_, _, _, _) -> todo
+    App3(_, _, func1, args1), App3(_, _, func2, args2) ->
+      type_eq(func1, func2) && list.all(
+        list.zip(args1, args2),
+        fn(p) { type_eq(p.0, p.1) },
+      )
     TDynamic3(_), TDynamic3(_) -> True
     TType3(_), TType3(_) -> True
     TLabelType3(_), TLabelType3(_) -> True
@@ -459,7 +465,7 @@ pub fn typeof(e: Expr3) -> Expr3 {
     Int3(pos, _) -> Builtin3(pos, TType3(pos), "int")
     Ident3(_, t, _) -> t
     Builtin3(_, t, _) -> t
-    DotAccess3(_, t, _, _) -> t
+    ModuleAccess3(_, t, _, _) -> t
     Func3(_, t, _, _, _) -> t
     App3(_, t, _, _) -> t
     Downcast3(_, _, _, t) -> t
@@ -477,7 +483,7 @@ pub type Expr4 {
   Int4(pos: Position, val: Int)
   Ident4(pos: Position, t: Expr4, id: Ident)
   Builtin4(pos: Position, t: Expr4, name: String)
-  DotAccess4(pos: Position, t: Expr4, expr: Expr4, field: String)
+  ModuleAccess4(pos: Position, t: Expr4, module: String, field: String)
   Func4(pos: Position, t: Expr4, args: List(#(Id, Expr4)), body: Expr4)
   App4(pos: Position, t: Expr4, func: Expr4, args: List(Expr4))
   Upcast4(pos: Position, e: Expr4, from: Expr4, to: Expr4)
@@ -501,7 +507,7 @@ pub fn pretty_expr(e: Expr4) -> String {
     Ident4(_, _, Local(id)) -> "x" <> to_string(id)
     Ident4(_, _, Global(name)) -> name
     Builtin4(_, _, name) -> name
-    DotAccess4(_, _, e2, field) -> pretty_expr(e2) <> "." <> field
+    ModuleAccess4(_, _, module, field) -> module <> "." <> field
     Func4(_, _, args, body) ->
       "fn(" <> {
         args

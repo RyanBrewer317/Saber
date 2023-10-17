@@ -1,11 +1,11 @@
 import monad.{Monad, do, return}
 import core.{
   App2, App3, Builtin2, Builtin3, CallingNonFunction, CallingWrongArity, Def2,
-  Def3, DotAccess2, Downcast3, Expr2, Expr3, Func2, Func3, Global, Id, Ident,
-  Ident2, Ident3, Import2, Import3, Int2, Int3, Library2, Library3, Local,
-  Module2, Module3, Stmt2, Stmt3, TDynamic2, TDynamic3, TLabelType2, TLabelType3,
-  TPi2, TPi3, TType2, TType3, TypeError, Upcast3, contains3, ident_to_str,
-  substitute, type_eq, typeof,
+  Def3, Downcast3, Expr2, Expr3, Func2, Func3, Global, Id, Ident, Ident2, Ident3,
+  Import2, Import3, Int2, Int3, Library2, Library3, Local, Module2, Module3,
+  ModuleAccess2, ModuleAccess3, Stmt2, Stmt3, TDynamic2, TDynamic3, TLabelType2,
+  TLabelType3, TPi2, TPi3, TType2, TType3, TypeError, Upcast3, contains3,
+  ident_to_str, substitute, type_eq, typeof,
 }
 import gleam/map.{Map, get, insert}
 import gleam/result
@@ -22,7 +22,7 @@ fn annotate_mod(mod2: Module2) -> Monad(Module3) {
     #([], map.new()),
     fn(s, so_far) {
       let #(ast, gamma) = so_far
-      use #(s2, gamma2) <- do(stmt(s, gamma, mod2.symbol_table))
+      use #(s2, gamma2) <- do(stmt(s, gamma, mod2))
       return(#([s2, ..ast], gamma2))
     },
   ))
@@ -30,7 +30,7 @@ fn annotate_mod(mod2: Module2) -> Monad(Module3) {
   let symbol_table =
     map.map_values(
       mod2.symbol_table,
-      fn(_, v) { monad.unwrap(expr(gamma, v, mod2.symbol_table)) },
+      fn(_, v) { monad.unwrap(expr(gamma, v, mod2)) },
     )
   return(Module3(mod2.path, subs, symbol_table, mod2.files, list.reverse(ast)))
 }
@@ -38,13 +38,13 @@ fn annotate_mod(mod2: Module2) -> Monad(Module3) {
 fn stmt(
   s: Stmt2,
   gamma: Map(Ident, Expr3),
-  symbol_table: Map(String, Expr2),
+  mod: Module2,
 ) -> Monad(#(Stmt3, Map(Ident, Expr3))) {
   case s {
     Def2(p, name, val) -> {
       use val2 <- do(
         gamma
-        |> expr(val, symbol_table),
+        |> expr(val, mod),
       )
       return(#(Def3(p, name, val2), insert(gamma, Global(name), typeof(val2))))
     }
@@ -52,11 +52,7 @@ fn stmt(
   }
 }
 
-fn expr(
-  gamma: Map(Ident, Expr3),
-  e: Expr2,
-  symbol_table: Map(String, Expr2),
-) -> Monad(Expr3) {
+fn expr(gamma: Map(Ident, Expr3), e: Expr2, mod: Module2) -> Monad(Expr3) {
   case e {
     TType2(p) -> return(TType3(p))
     Ident2(p, id) ->
@@ -69,9 +65,8 @@ fn expr(
                 "undefined local variable " <> ident_to_str(id) <> " during typechecking",
               )
             Global(name) ->
-              case map.get(symbol_table, name) {
-                Ok(t) ->
-                  monad.fmap(expr(gamma, t, symbol_table), Ident3(p, _, id))
+              case map.get(mod.symbol_table, name) {
+                Ok(t) -> monad.fmap(expr(gamma, t, mod), Ident3(p, _, id))
                 Error(Nil) ->
                   panic(
                     "undefined global variable " <> ident_to_str(id) <> " during typechecking",
@@ -84,7 +79,7 @@ fn expr(
       // prove gamma |- func2: typeof(func2)
       use func2 <- do(
         gamma
-        |> expr(func, symbol_table),
+        |> expr(func, mod),
       )
       case typeof(func2) {
         TPi3(_, imp_args, formal_args, ret_t) -> {
@@ -92,7 +87,7 @@ fn expr(
             list.length(formal_args) == list.length(args),
             monad.fail(CallingWrongArity(p, typeof(func2), list.length(args))),
           )
-          use args2 <- do(monad.map(args, expr(gamma, _, symbol_table)))
+          use args2 <- do(monad.map(args, expr(gamma, _, mod)))
           let solutions = solve(imp_args, formal_args, args2)
           use supplied_imp_args <- do(monad.map(
             imp_args,
@@ -144,7 +139,7 @@ fn expr(
           ))
         }
         TDynamic3(p) -> {
-          use args2 <- do(monad.map(args, expr(gamma, _, symbol_table)))
+          use args2 <- do(monad.map(args, expr(gamma, _, mod)))
           return(App3(
             p,
             TDynamic3(p),
@@ -167,20 +162,29 @@ fn expr(
     }
     Int2(p, i) -> return(Int3(p, i))
     Builtin2(p, "int") -> return(Builtin3(p, TType3(p), "int"))
+    Builtin2(p, "print") ->
+      return(Builtin3(
+        p,
+        TPi3(
+          pos: p,
+          implicit_args: [],
+          args: [#(-1, Builtin3(p, TType3(p), "int"))],
+          body: Builtin3(p, TType3(p), "int"),
+        ),
+        "print",
+      ))
     Func2(p, imp_args, args, body) -> {
       let gamma2 =
         list.fold(imp_args, gamma, fn(g, a) { insert(g, Local(a), TType3(p)) })
       use args2 <- do(monad.map(
         args,
-        fn(a) {
-          monad.fmap(expr(gamma2, a.1, symbol_table), fn(a2) { #(a.0, a2) })
-        },
+        fn(a) { monad.fmap(expr(gamma2, a.1, mod), fn(a2) { #(a.0, a2) }) },
       ))
       let gamma3 =
         list.fold(args2, gamma2, fn(g, a) { insert(g, Local(a.0), a.1) })
       use body2 <- do(
         gamma3
-        |> expr(body, symbol_table),
+        |> expr(body, mod),
       )
       return(Func3(
         p,
@@ -195,19 +199,30 @@ fn expr(
         list.fold(imp_args, gamma, fn(g, a) { insert(g, Local(a), TType3(p)) })
       use args2 <- do(monad.map(
         args,
-        fn(a) {
-          monad.fmap(expr(gamma2, a.1, symbol_table), fn(a2) { #(a.0, a2) })
-        },
+        fn(a) { monad.fmap(expr(gamma2, a.1, mod), fn(a2) { #(a.0, a2) }) },
       ))
       let gamma3 =
         list.fold(args2, gamma2, fn(g, a) { insert(g, Local(a.0), a.1) })
       use body2 <- do(
         gamma3
-        |> expr(body, symbol_table),
+        |> expr(body, mod),
       )
       return(TPi3(p, imp_args, args2, body2))
     }
-    DotAccess2(_, _, _) -> todo
+    ModuleAccess2(p, path, field) -> {
+      let sub =
+        mod.subs
+        |> list.find(fn(s) { s.path == path })
+        |> result.lazy_unwrap(fn() { panic("Module not found: " <> path) })
+      let thing =
+        map.get(sub.symbol_table, field)
+        |> result.lazy_unwrap(fn() { panic("undefined") })
+      use t <- do(
+        gamma
+        |> expr(thing, mod),
+      )
+      return(ModuleAccess3(p, t, path, field))
+    }
     TDynamic2(p) -> return(TDynamic3(p))
     TLabelType2(p) -> return(TLabelType3(p))
   }
