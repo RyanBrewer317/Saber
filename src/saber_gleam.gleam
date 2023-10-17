@@ -2,7 +2,7 @@ import gleam/io
 import gleam/result
 import gleam/list
 import parser
-import core.{CouldntOpenFile, Library0, Module0, pretty_err, pretty_expr}
+import core.{CouldntOpenFile, Library0, Module0, pretty_err}
 import monad.{Monad, do, return, try}
 import ast
 import type_check

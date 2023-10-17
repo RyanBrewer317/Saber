@@ -7,7 +7,6 @@ import gleam/string
 import gleam/int
 import gleam/result
 import gleam/list
-import gleam/io
 import gleam/map.{Map}
 import party as p
 import monad.{Monad, do, return}
