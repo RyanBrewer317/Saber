@@ -117,7 +117,7 @@ fn expr(e: Expr, mod: Module, heap: Map(Ident, Expr)) -> Monad(Expr) {
         Builtin4(_, _, "print") -> {
           use args3 <- do(monad.map(args, expr(_, mod, heap)))
           let assert [Int4(p, i)] = args3
-          io.debug(i)
+          io.println(string.inspect(i))
           return(Int4(p, i))
         }
         _ -> panic("application of non-function")

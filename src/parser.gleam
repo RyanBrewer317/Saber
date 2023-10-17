@@ -68,7 +68,7 @@ fn lamlit(path: String) -> p.Parser(Expr1, Nil) {
   use pos <- p.do(p.pos())
   use _ <- p.do(p.string("fn"))
   use _ <- p.do(ws())
-  use res <- p.do(p.perhaps(p.char("<")))
+  use res <- p.do(p.perhaps(p.char("[")))
   use imp_args <- p.do(case res {
     Ok(_) -> {
       use out <- p.do(comma_sep({
@@ -77,7 +77,7 @@ fn lamlit(path: String) -> p.Parser(Expr1, Nil) {
         use _ <- p.do(ws())
         p.return(x)
       }))
-      use _ <- p.do(p.char(">"))
+      use _ <- p.do(p.char("]"))
       p.return(out)
     }
     Error(Nil) -> p.return([])
@@ -136,7 +136,7 @@ fn tforall(path: String) -> p.Parser(Expr1, Nil) {
   use pos <- p.do(p.pos())
   use _ <- p.do(p.string("Pi"))
   use _ <- p.do(ws())
-  use res <- p.do(p.perhaps(p.char("<")))
+  use res <- p.do(p.perhaps(p.char("[")))
   use implicit_args <- p.do(case res {
     Ok(_) -> {
       use out <- p.do(comma_sep({
@@ -145,7 +145,7 @@ fn tforall(path: String) -> p.Parser(Expr1, Nil) {
         use _ <- p.do(ws())
         p.return(arg)
       }))
-      use _ <- p.do(p.char(">"))
+      use _ <- p.do(p.char("]"))
       p.return(out)
     }
     Error(Nil) -> p.return([])

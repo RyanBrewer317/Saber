@@ -12,6 +12,6 @@ def test3 = (fn(f: int->int) f(7))(fn(n: int) n) // returns 7, no magic here
 // the values for x and y are inferred using z and w
 // When a normal argument has no type annotation, it is given the dynamic type `dyn`
 // When an implicit argument has no type annotation, it is given the type `type`
-def id = fn<a>(x: a) x
-def first = fn<a, b>(x: a, y: b) x
+def id = fn[a](x: a) x
+def first = fn[a, b](x: a, y: b) x
 def test7 = first(id(id)(id(4)), fn(a) 5) // returns `4`, and `fn(a) 5` has type `dyn->int`
