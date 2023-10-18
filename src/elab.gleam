@@ -5,100 +5,115 @@ import core.{
   TDynamic4, TKind3, TKind4, TLabelKind3, TLabelKind4, TLabelType3, TLabelType4,
   TPi3, TPi4, TType3, TType4, Upcast3, Upcast4,
 }
-import monad.{Monad, do, return}
+import monad.{Monad, State, do, monadic_fold, monadic_map, return}
 import gleam/list
 import gleam/map
 
-pub fn elaborate_lib(lib3: Library3) -> Monad(Library4) {
-  use entry <- do(elaborate_mod(lib3.entry))
-  return(Library4(lib3.path, entry))
+pub fn elaborate_lib(lib3: Library3, state: State) -> Monad(Library4) {
+  use entry, state2 <- do(elaborate_mod(lib3.entry, state))
+  return(Library4(lib3.path, entry), state2)
 }
 
-fn elaborate_mod(mod3: Module3) -> Monad(Module4) {
-  use #(ast) <- do(monad.reduce(mod3.ast, #([]), iteratee))
-  use subs <- do(monad.map(mod3.subs, elaborate_mod))
+fn elaborate_mod(mod3: Module3, state: State) -> Monad(Module4) {
+  use #(ast), state2 <- monadic_fold(mod3.ast, #([]), state, iteratee)
+  use subs, state3 <- monadic_map(mod3.subs, state2, elaborate_mod)
   let symbol_table =
-    map.map_values(mod3.symbol_table, fn(_, v) { monad.unwrap(expr(v)) })
-  return(Module4(mod3.path, subs, symbol_table, mod3.files, list.reverse(ast)))
+    map.map_values(
+      mod3.symbol_table,
+      fn(_, v) { monad.unwrap(expr(v, state3)) },
+    )
+  return(
+    Module4(mod3.path, subs, symbol_table, mod3.files, list.reverse(ast)),
+    state3,
+  )
 }
 
-fn iteratee(s: Stmt3, so_far: #(List(Stmt4))) -> Monad(#(List(Stmt4))) {
-  use s2 <- do(stmt(s))
+fn iteratee(
+  so_far: #(List(Stmt4)),
+  s: Stmt3,
+  state: State,
+) -> Monad(#(List(Stmt4))) {
+  use s2, state2 <- do(stmt(s, state))
   let #(so_far2) = so_far
-  return(#([s2, ..so_far2]))
+  return(#([s2, ..so_far2]), state2)
 }
 
-pub fn stmt(s: Stmt3) -> Monad(Stmt4) {
+pub fn stmt(s: Stmt3, state: State) -> Monad(Stmt4) {
   case s {
-    Def3(p, id, e) ->
-      expr(e)
-      |> monad.fmap(Def4(p, id, _))
-    Import3(p, name) -> return(Import4(p, name))
+    Def3(p, id, e) -> {
+      use e2, state2 <- do(expr(e, state))
+      return(Def4(p, id, e2), state2)
+    }
+    Import3(p, name) -> return(Import4(p, name), state)
   }
 }
 
-fn expr(e: Expr3) -> Monad(Expr4) {
+fn expr(e: Expr3, state: State) -> Monad(Expr4) {
   case e {
-    Int3(p, i) -> return(Int4(p, i))
-    Ident3(p, t, id) ->
-      expr(t)
-      |> monad.fmap(Ident4(p, _, id))
-    Builtin3(p, t, name) ->
-      expr(t)
-      |> monad.fmap(Builtin4(p, _, name))
+    Int3(p, i) -> return(Int4(p, i), state)
+    Ident3(p, t, id) -> {
+      use t2, state2 <- do(expr(t, state))
+      return(Ident4(p, t2, id), state2)
+    }
+    Builtin3(p, t, name) -> {
+      use t2, state2 <- do(expr(t, state))
+      return(Builtin4(p, t2, name), state2)
+    }
     ModuleAccess3(p, t, module_name, field) -> {
-      use t2 <- do(expr(t))
-      return(ModuleAccess4(p, t2, module_name, field))
+      use t2, state2 <- do(expr(t, state))
+      return(ModuleAccess4(p, t2, module_name, field), state2)
     }
     Func3(p, t, imp_args, args, body) -> {
-      use t2 <- do(expr(t))
+      use t2, state2 <- do(expr(t, state))
       let imp_args2 = list.map(imp_args, fn(a) { #(a, TType4(p)) })
-      use args2 <- do(monad.map(
+      use args2, state3 <- monadic_map(
         args,
-        fn(a) {
-          expr(a.1)
-          |> monad.fmap(fn(t) { #(a.0, t) })
+        state2,
+        fn(a, statex) {
+          use t, statex2 <- do(expr(a.1, statex))
+          return(#(a.0, t), statex2)
         },
-      ))
+      )
       let args3 = list.append(imp_args2, args2)
-      use body2 <- do(expr(body))
-      return(Func4(p, t2, args3, body2))
+      use body2, state4 <- do(expr(body, state3))
+      return(Func4(p, t2, args3, body2), state4)
     }
     App3(p, t, func, args) -> {
-      use func2 <- do(expr(func))
-      use t2 <- do(expr(t))
-      use args2 <- do(monad.map(args, expr))
-      return(App4(p, t2, func2, args2))
+      use func2, state2 <- do(expr(func, state))
+      use t2, state3 <- do(expr(t, state2))
+      use args2, state4 <- monadic_map(args, state3, expr)
+      return(App4(p, t2, func2, args2), state4)
     }
     TPi3(p, imp_args, args, body) -> {
       let imp_args2 = list.map(imp_args, fn(a) { #(a, TType4(p)) })
-      use args2 <- do(monad.map(
+      use args2, state2 <- monadic_map(
         args,
-        fn(a) {
-          expr(a.1)
-          |> monad.fmap(fn(t) { #(a.0, t) })
+        state,
+        fn(a, statex) {
+          use t, statex2 <- do(expr(a.1, statex))
+          return(#(a.0, t), statex2)
         },
-      ))
+      )
       let args3 = list.append(imp_args2, args2)
-      use body2 <- do(expr(body))
-      return(TPi4(p, args3, body2))
+      use body2, state3 <- do(expr(body, state2))
+      return(TPi4(p, args3, body2), state3)
     }
     Downcast3(p, e, to, from) -> {
-      use e2 <- do(expr(e))
-      use to2 <- do(expr(to))
-      use from2 <- do(expr(from))
-      return(Downcast4(p, e2, to2, from2))
+      use e2, state2 <- do(expr(e, state))
+      use to2, state3 <- do(expr(to, state2))
+      use from2, state4 <- do(expr(from, state3))
+      return(Downcast4(p, e2, to2, from2), state4)
     }
     Upcast3(p, e, to, from) -> {
-      use e2 <- do(expr(e))
-      use to2 <- do(expr(to))
-      use from2 <- do(expr(from))
-      return(Upcast4(p, e2, to2, from2))
+      use e2, state2 <- do(expr(e, state))
+      use to2, state3 <- do(expr(to, state2))
+      use from2, state4 <- do(expr(from, state3))
+      return(Upcast4(p, e2, to2, from2), state4)
     }
-    TDynamic3(p) -> return(TDynamic4(p))
-    TType3(p) -> return(TType4(p))
-    TKind3(p) -> return(TKind4(p))
-    TLabelType3(p) -> return(TLabelType4(p))
-    TLabelKind3(p) -> return(TLabelKind4(p))
+    TDynamic3(p) -> return(TDynamic4(p), state)
+    TType3(p) -> return(TType4(p), state)
+    TKind3(p) -> return(TKind4(p), state)
+    TLabelType3(p) -> return(TLabelType4(p), state)
+    TLabelKind3(p) -> return(TLabelKind4(p), state)
   }
 }

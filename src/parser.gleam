@@ -9,31 +9,39 @@ import gleam/result
 import gleam/list
 import gleam/map.{Map}
 import party as p
-import monad.{Monad, do, return}
+import monad.{Monad, State, do, monadic_map, return, try}
 import simplifile
 
-pub fn parse_lib(lib: Library0) -> Monad(Library1) {
-  use entry <- do(parse_module(lib.entry))
-  return(Library1(lib.path, entry))
+pub fn parse_lib(lib: Library0, state: State) -> Monad(Library1) {
+  use entry, state2 <- do(parse_module(lib.entry, state))
+  return(Library1(lib.path, entry), state2)
 }
 
-fn parse_module(mod: Module0) -> Monad(Module1) {
-  use parses <- do({
-    use filename <- monad.map(mod.files)
-    use code <- monad.try(
-      simplifile.read(mod.path <> "/" <> filename)
-      |> result.replace_error(CouldntOpenFile(filename)),
-    )
-    parse(mod.path <> "/" <> filename, code)
-  })
-  use subs <- do(monad.map(mod.subs, parse_module))
+fn parse_module(mod: Module0, state: State) -> Monad(Module1) {
+  use parses, state2 <- monadic_map(
+    mod.files,
+    state,
+    fn(filename, state) {
+      use code, state2 <- try(
+        simplifile.read(mod.path <> "/" <> filename)
+        |> result.replace_error(CouldntOpenFile(filename)),
+        state,
+      )
+      parse(mod.path <> "/" <> filename, code, state2)
+    },
+  )
+
+  use subs, state3 <- monadic_map(mod.subs, state2, parse_module)
   let #(ast, symbol_table) =
     list.fold(
       parses,
       #([], map.new()),
       fn(curr, new) { #(list.append(new.0, curr.0), map.merge(curr.1, new.1)) },
     )
-  return(Module1(mod.path, subs, symbol_table, mod.files, list.reverse(ast)))
+  return(
+    Module1(mod.path, subs, symbol_table, mod.files, list.reverse(ast)),
+    state3,
+  )
 }
 
 fn intlit() -> p.Parser(Expr1, Nil) {
@@ -180,6 +188,43 @@ fn ws() -> p.Parser(Nil, a) {
   p.return(Nil)
 }
 
+fn postfix(e: Expr1, path: String) -> p.Parser(Expr1, Nil) {
+  use pos <- p.do(p.pos())
+  use mb_call <- p.do(p.perhaps(paren(comma_sep(p.lazy(expr(path))))))
+  case mb_call {
+    Ok(args) -> {
+      let e = App1(pos, e, args)
+      use _ <- p.do(ws())
+      postfix(e, path)
+    }
+    Error(Nil) -> {
+      use mb_arr <- p.do(p.perhaps(p.string("->")))
+      case mb_arr {
+        Ok(_) -> {
+          use rhs <- p.do(p.lazy(expr(path)))
+          let e = TPi1(pos, [], [#("_", e)], rhs)
+          use _ <- p.do(ws())
+          postfix(e, path)
+        }
+        Error(Nil) -> {
+          use mb_dot <- p.do(p.perhaps(p.char(".")))
+          use _ <- p.do(ws())
+          case mb_dot {
+            Ok(_) -> {
+              use _ <- p.do(ws())
+              use fieldname <- p.do(identstring())
+              let e = DotAccess1(pos, e, fieldname)
+              use _ <- p.do(ws())
+              postfix(e, path)
+            }
+            Error(Nil) -> p.return(e)
+          }
+        }
+      }
+    }
+  }
+}
+
 fn expr(path: String) -> fn() -> p.Parser(Expr1, Nil) {
   fn() {
     use _ <- p.do(ws())
@@ -192,45 +237,9 @@ fn expr(path: String) -> fn() -> p.Parser(Expr1, Nil) {
       identlit(path),
     ]))
     use _ <- p.do(ws())
-    use pos <- p.do(p.pos())
-    use res <- p.do(p.perhaps(p.many1({
-      use pos2 <- p.do(p.pos())
-      use args <- p.do(paren(comma_sep(p.lazy(expr(path)))))
-      p.return(#(pos2, args))
-    })))
+    use res <- p.do(postfix(lit, path))
     use _ <- p.do(ws())
-    use res2 <- p.do(p.perhaps(p.string("->")))
-    use res <- p.do(case res, res2 {
-      Ok(arg), Error(Nil) ->
-        p.return(list.fold(arg, lit, fn(a, b) { App1(b.0, a, b.1) }))
-      Ok(arg), Ok(_) -> {
-        use _ <- p.do(ws())
-        use lit2 <- p.do(p.lazy(expr(path)))
-        p.return(TPi1(
-          pos,
-          [],
-          [#("_", list.fold(arg, lit, fn(a, b) { App1(b.0, a, b.1) }))],
-          lit2,
-        ))
-      }
-      Error(Nil), Ok(_) -> {
-        use _ <- p.do(ws())
-        use lit2 <- p.do(p.lazy(expr(path)))
-        p.return(TPi1(pos, [], [#("_", lit)], lit2))
-      }
-      Error(Nil), Error(Nil) -> p.return(lit)
-    })
-    use _ <- p.do(ws())
-    use mb_dot <- p.do(p.perhaps(p.char(".")))
-    use _ <- p.do(ws())
-    case mb_dot {
-      Ok(_) -> {
-        use _ <- p.do(ws())
-        use fieldname <- p.do(identstring())
-        p.return(DotAccess1(pos, res, fieldname))
-      }
-      Error(Nil) -> p.return(res)
-    }
+    p.return(res)
   }
 }
 
@@ -243,50 +252,77 @@ fn import_stmt(path) -> p.Parser(#(Stmt1, String, Expr1), e) {
   p.return(#(Import1(pos, name), name, Ident1(pos, path, "dyn")))
 }
 
-fn def(path: String) -> p.Parser(#(Stmt1, String, Expr1), Nil) {
+fn fn_def(path: String) -> p.Parser(#(Stmt1, String, Expr1), Nil) {
   use _ <- p.do(ws())
   use pos <- p.do(p.pos())
-  use _ <- p.do(p.string("def"))
+  use _ <- p.do(p.string("fn"))
   use _ <- p.do(p.not(p.alt(p.alphanum(), p.char("_"))))
   use _ <- p.do(ws())
   use name <- p.do(identstring())
   use _ <- p.do(ws())
-  use mb_colon <- p.do(p.perhaps(p.char(":")))
-  use t <- p.do(case mb_colon {
+  use res <- p.do(p.perhaps(p.char("[")))
+  use implicit_args <- p.do(case res {
     Ok(_) -> {
-      use _ <- p.do(ws())
-      use t <- p.do(expr(path)())
-      p.return(t)
+      use out <- p.do(comma_sep({
+        use _ <- p.do(ws())
+        use arg <- p.do(identstring())
+        use _ <- p.do(ws())
+        p.return(arg)
+      }))
+      use _ <- p.do(p.char("]"))
+      p.return(out)
     }
+    Error(Nil) -> p.return([])
+  })
+  use _ <- p.do(ws())
+  use _ <- p.do(p.char("("))
+  use args <- p.do(comma_sep({
+    use _ <- p.do(ws())
+    use arg <- p.do(identstring())
+    use _ <- p.do(ws())
+    use _ <- p.do(p.char(":"))
+    use t <- p.do(p.lazy(expr(path)))
+    p.return(#(arg, t))
+  }))
+  use _ <- p.do(p.char(")"))
+  use _ <- p.do(ws())
+  use mb_ret_t <- p.do(p.perhaps(p.string("->")))
+  use ret_t <- p.do(case mb_ret_t {
+    Ok(_) -> expr(path)()
     Error(Nil) -> p.return(Ident1(pos, path, "dyn"))
   })
-  use _ <- p.do(p.char("="))
+  let t = TPi1(pos, implicit_args, args, ret_t)
+  use _ <- p.do(p.char("{"))
   use body <- p.do(expr(path)())
-  p.return(#(Def1(pos, name, body), name, t))
+  use _ <- p.do(p.char("}"))
+  use _ <- p.do(p.lazy(ws))
+  p.return(#(Def1(pos, name, Func1(pos, implicit_args, args, body)), name, t))
 }
 
 fn stmt(path: String) -> p.Parser(#(Stmt1, String, Expr1), Nil) {
-  p.choice([def(path), import_stmt(path)])
+  p.choice([fn_def(path), import_stmt(path)])
 }
 
 fn parse(
   path: String,
   src: String,
-) -> monad.Monad(#(List(Stmt1), Map(String, Expr1))) {
-  p.go(
-    {
-      use res <- p.do(p.many1(stmt(path)))
-      use _ <- p.do(p.end())
-      let #(stmts, symbol_table) =
-        list.fold(
-          res,
-          #([], map.new()),
-          fn(curr, r) { #([r.0, ..curr.0], map.insert(curr.1, r.1, r.2)) },
-        )
-      p.return(#(stmts, symbol_table))
-    },
-    src,
-  )
-  |> result.map_error(ParseError(path, _))
-  |> monad.lift
+  state: State,
+) -> Monad(#(List(Stmt1), Map(String, Expr1))) {
+  let res =
+    p.go(
+      {
+        use res <- p.do(p.many1(stmt(path)))
+        use _ <- p.do(p.end())
+        let #(stmts, symbol_table) =
+          list.fold(
+            res,
+            #([], map.new()),
+            fn(curr, r) { #([r.0, ..curr.0], map.insert(curr.1, r.1, r.2)) },
+          )
+        p.return(#(stmts, symbol_table))
+      },
+      src,
+    )
+    |> result.map_error(ParseError(path, _))
+  try(res, state, return)
 }

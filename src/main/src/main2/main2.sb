@@ -1,4 +1,12 @@
-def first:  Pi[a,b](x:a,y:b) a = fn[a, b](x: a, y: b) x
-def second: Pi[a,b](x:a,y:b) b = fn[a, b](x: a, y: b) y
-def id: Pi[a](x: a) a = fn[a](x: a) x
-def hi: int = 9
+fn first[a, b](x: a, y: b) -> a {
+  x
+}
+fn second[a, b](x: a, y: b) -> b {
+  y
+}
+fn id[a](x: a) -> a {
+  x
+}
+fn hi() -> int {
+  9
+}

@@ -1,4 +1,4 @@
-import monad.{Monad, do, return}
+import monad.{Monad, State, do, monadic_fold, monadic_map, return}
 import core.{
   App2, App3, Builtin2, Builtin3, CallingNonFunction, CallingWrongArity, Def2,
   Def3, Downcast3, Expr2, Expr3, Func2, Func3, Global, Id, Ident, Ident2, Ident3,
@@ -11,53 +11,66 @@ import gleam/map.{Map, get, insert}
 import gleam/result
 import gleam/list
 
-pub fn annotate_lib(lib2: Library2) -> Monad(Library3) {
-  use entry <- do(annotate_mod(lib2.entry))
-  return(Library3(lib2.path, entry))
+pub fn annotate_lib(lib2: Library2, state: State) -> Monad(Library3) {
+  use entry, state2 <- do(annotate_mod(lib2.entry, state))
+  return(Library3(lib2.path, entry), state2)
 }
 
-fn annotate_mod(mod2: Module2) -> Monad(Module3) {
-  use #(ast, gamma) <- do(monad.reduce(
+fn annotate_mod(mod2: Module2, state: State) -> Monad(Module3) {
+  use #(ast, gamma), state2 <- monadic_fold(
     mod2.ast,
     #([], map.new()),
-    fn(s, so_far) {
+    state,
+    fn(so_far, s, statex) {
       let #(ast, gamma) = so_far
-      use #(s2, gamma2) <- do(stmt(s, gamma, mod2))
-      return(#([s2, ..ast], gamma2))
+      use #(s2, gamma2), statex2 <- do(stmt(s, gamma, mod2, statex))
+      return(#([s2, ..ast], gamma2), statex2)
     },
-  ))
-  use subs <- do(monad.map(mod2.subs, annotate_mod))
+  )
+  use subs, state3 <- monadic_map(mod2.subs, state2, annotate_mod)
   let symbol_table =
     map.map_values(
       mod2.symbol_table,
-      fn(_, v) { monad.unwrap(expr(gamma, v, mod2)) },
+      fn(_, v) { monad.unwrap(expr(gamma, v, mod2, state3)) },
     )
-  return(Module3(mod2.path, subs, symbol_table, mod2.files, list.reverse(ast)))
+  return(
+    Module3(mod2.path, subs, symbol_table, mod2.files, list.reverse(ast)),
+    state3,
+  )
 }
 
 fn stmt(
   s: Stmt2,
   gamma: Map(Ident, Expr3),
   mod: Module2,
+  state: State,
 ) -> Monad(#(Stmt3, Map(Ident, Expr3))) {
   case s {
     Def2(p, name, val) -> {
-      use val2 <- do(
+      use val2, state2 <- do(
         gamma
-        |> expr(val, mod),
+        |> expr(val, mod, state),
       )
-      return(#(Def3(p, name, val2), insert(gamma, Global(name), typeof(val2))))
+      return(
+        #(Def3(p, name, val2), insert(gamma, Global(name), typeof(val2))),
+        state2,
+      )
     }
-    Import2(p, name) -> return(#(Import3(p, name), gamma))
+    Import2(p, name) -> return(#(Import3(p, name), gamma), state)
   }
 }
 
-fn expr(gamma: Map(Ident, Expr3), e: Expr2, mod: Module2) -> Monad(Expr3) {
+fn expr(
+  gamma: Map(Ident, Expr3),
+  e: Expr2,
+  mod: Module2,
+  state: State,
+) -> Monad(Expr3) {
   case e {
-    TType2(p) -> return(TType3(p))
+    TType2(p) -> return(TType3(p), state)
     Ident2(p, id) ->
       case get(gamma, id) {
-        Ok(t) -> return(Ident3(p, t, id))
+        Ok(t) -> return(Ident3(p, t, id), state)
         Error(Nil) ->
           case id {
             Local(_) ->
@@ -66,7 +79,10 @@ fn expr(gamma: Map(Ident, Expr3), e: Expr2, mod: Module2) -> Monad(Expr3) {
               )
             Global(name) ->
               case map.get(mod.symbol_table, name) {
-                Ok(t) -> monad.fmap(expr(gamma, t, mod), Ident3(p, _, id))
+                Ok(t) -> {
+                  use t2, state2 <- do(expr(gamma, t, mod, state))
+                  return(Ident3(p, t2, id), state2)
+                }
                 Error(Nil) ->
                   panic(
                     "undefined global variable " <> ident_to_str(id) <> " during typechecking",
@@ -77,30 +93,36 @@ fn expr(gamma: Map(Ident, Expr3), e: Expr2, mod: Module2) -> Monad(Expr3) {
 
     App2(p, func, args) -> {
       // prove gamma |- func2: typeof(func2)
-      use func2 <- do(
-        gamma
-        |> expr(func, mod),
-      )
+      use func2, state2 <- do(expr(gamma, func, mod, state))
       case typeof(func2) {
         TPi3(_, imp_args, formal_args, ret_t) -> {
-          monad.when(
-            list.length(formal_args) == list.length(args),
+          use state3 <- monad.when(
+            list.length(formal_args) != list.length(args),
             monad.fail(CallingWrongArity(p, typeof(func2), list.length(args))),
+            state2,
           )
-          use args2 <- do(monad.map(args, expr(gamma, _, mod)))
+          use args2, state4 <- monadic_map(
+            args,
+            state3,
+            fn(a, statex) { expr(gamma, a, mod, statex) },
+          )
           let solutions = solve(imp_args, formal_args, args2)
-          use supplied_imp_args <- do(monad.map(
+          use supplied_imp_args, state5 <- monadic_map(
             imp_args,
-            fn(a) {
-              return(result.lazy_unwrap(
-                map.get(solutions, a),
-                or: fn() { panic("No solution found for implicit argument") },
-              ))
+            state4,
+            fn(a, statex) {
+              return(
+                result.lazy_unwrap(
+                  map.get(solutions, a),
+                  or: fn() { panic("No solution found for implicit argument") },
+                ),
+                statex,
+              )
             },
-          ))
+          )
           let formal_args2 =
             list.map(formal_args, fn(a) { #(a.0, instantiate(solutions, a.1)) })
-          use args3 <- do(monad.map(
+          use args3, state6 <- monadic_map(
             list.zip(
               list.append(
                 list.map(imp_args, fn(i) { #(i, TType3(p)) }),
@@ -108,106 +130,134 @@ fn expr(gamma: Map(Ident, Expr3), e: Expr2, mod: Module2) -> Monad(Expr3) {
               ),
               list.append(supplied_imp_args, args2),
             ),
-            fn(a) {
+            state5,
+            fn(a, statex) {
               let #(#(_, argt), actual_arg) = a
-              simplify(Downcast3(
-                p,
-                Upcast3(p, actual_arg, typeof(actual_arg), TDynamic3(p)),
-                TDynamic3(p),
-                argt,
-              ))
-            },
-          ))
-          return(App3(
-            p,
-            list.fold(
-              list.append(
-                list.zip(formal_args2, args3),
-                list.zip(
-                  list.map(imp_args, fn(a) { #(a, TType3(p)) }),
-                  supplied_imp_args,
+              simplify(
+                Downcast3(
+                  p,
+                  Upcast3(p, actual_arg, typeof(actual_arg), TDynamic3(p)),
+                  TDynamic3(p),
+                  argt,
                 ),
+                statex,
+              )
+            },
+          )
+          return(
+            App3(
+              p,
+              list.fold(
+                list.append(
+                  list.zip(formal_args2, args3),
+                  list.zip(
+                    list.map(imp_args, fn(a) { #(a, TType3(p)) }),
+                    supplied_imp_args,
+                  ),
+                ),
+                ret_t,
+                fn(ret_t_so_far, a) {
+                  let #(#(id, _), actual_arg) = a
+                  substitute(id, actual_arg, ret_t_so_far)
+                },
               ),
-              ret_t,
-              fn(ret_t_so_far, a) {
-                let #(#(id, _), actual_arg) = a
-                substitute(id, actual_arg, ret_t_so_far)
-              },
+              func2,
+              args3,
             ),
-            func2,
-            args3,
-          ))
+            state6,
+          )
         }
         TDynamic3(p) -> {
-          use args2 <- do(monad.map(args, expr(gamma, _, mod)))
-          return(App3(
-            p,
-            TDynamic3(p),
-            Downcast3(
+          use args2, state3 <- monadic_map(
+            args,
+            state2,
+            fn(a, statex) { expr(gamma, a, mod, statex) },
+          )
+          return(
+            App3(
               p,
-              func2,
               TDynamic3(p),
-              TPi3(
+              Downcast3(
                 p,
-                [],
-                list.map(args2, fn(a) { #(-1, typeof(a)) }),
+                func2,
                 TDynamic3(p),
+                TPi3(
+                  p,
+                  [],
+                  list.map(args2, fn(a) { #(-1, typeof(a)) }),
+                  TDynamic3(p),
+                ),
               ),
+              args2,
             ),
-            args2,
-          ))
+            state3,
+          )
         }
         t -> monad.fail(CallingNonFunction(t))
       }
     }
-    Int2(p, i) -> return(Int3(p, i))
-    Builtin2(p, "int") -> return(Builtin3(p, TType3(p), "int"))
+    Int2(p, i) -> return(Int3(p, i), state)
+    Builtin2(p, "int") -> return(Builtin3(p, TType3(p), "int"), state)
     Builtin2(p, "print") ->
-      return(Builtin3(
-        p,
-        TPi3(
-          pos: p,
-          implicit_args: [],
-          args: [#(-1, Builtin3(p, TType3(p), "int"))],
-          body: Builtin3(p, TType3(p), "int"),
+      return(
+        Builtin3(
+          p,
+          TPi3(
+            pos: p,
+            implicit_args: [],
+            args: [#(-1, Builtin3(p, TType3(p), "int"))],
+            body: Builtin3(p, TType3(p), "int"),
+          ),
+          "print",
         ),
-        "print",
-      ))
+        state,
+      )
     Func2(p, imp_args, args, body) -> {
       let gamma2 =
         list.fold(imp_args, gamma, fn(g, a) { insert(g, Local(a), TType3(p)) })
-      use args2 <- do(monad.map(
+      use args2, state2 <- monadic_map(
         args,
-        fn(a) { monad.fmap(expr(gamma2, a.1, mod), fn(a2) { #(a.0, a2) }) },
-      ))
+        state,
+        fn(a, statex) {
+          use a2, statex2 <- do(expr(gamma2, a.1, mod, statex))
+          return(#(a.0, a2), statex2)
+        },
+      )
       let gamma3 =
         list.fold(args2, gamma2, fn(g, a) { insert(g, Local(a.0), a.1) })
-      use body2 <- do(
+      use body2, state3 <- do(
         gamma3
-        |> expr(body, mod),
+        |> expr(body, mod, state2),
       )
-      return(Func3(
-        p,
-        TPi3(p, imp_args, args2, typeof(body2)),
-        imp_args,
-        args2,
-        body2,
-      ))
+      return(
+        Func3(
+          p,
+          TPi3(p, imp_args, args2, typeof(body2)),
+          imp_args,
+          args2,
+          body2,
+        ),
+        state3,
+      )
     }
     TPi2(p, imp_args, args, body) -> {
       let gamma2 =
         list.fold(imp_args, gamma, fn(g, a) { insert(g, Local(a), TType3(p)) })
-      use args2 <- do(monad.map(
+      use args2, state2 <- monadic_map(
         args,
-        fn(a) { monad.fmap(expr(gamma2, a.1, mod), fn(a2) { #(a.0, a2) }) },
-      ))
+        state,
+        fn(a, statex) {
+          use a2, statex2 <- do(expr(gamma2, a.1, mod, statex))
+          return(#(a.0, a2), statex2)
+        },
+      )
       let gamma3 =
         list.fold(args2, gamma2, fn(g, a) { insert(g, Local(a.0), a.1) })
-      use body2 <- do(
+      use body2, state3 <- do(
         gamma3
-        |> expr(body, mod),
+        |> expr(body, mod, state2),
       )
-      return(TPi3(p, imp_args, args2, body2))
+      return(TPi3(p, imp_args, args2, body2), state3)
     }
     ModuleAccess2(p, path, field) -> {
       let sub =
@@ -217,14 +267,14 @@ fn expr(gamma: Map(Ident, Expr3), e: Expr2, mod: Module2) -> Monad(Expr3) {
       let thing =
         map.get(sub.symbol_table, field)
         |> result.lazy_unwrap(fn() { panic("undefined") })
-      use t <- do(
+      use t, state2 <- do(
         gamma
-        |> expr(thing, mod),
+        |> expr(thing, mod, state),
       )
-      return(ModuleAccess3(p, t, path, field))
+      return(ModuleAccess3(p, t, path, field), state2)
     }
-    TDynamic2(p) -> return(TDynamic3(p))
-    TLabelType2(p) -> return(TLabelType3(p))
+    TDynamic2(p) -> return(TDynamic3(p), state)
+    TLabelType2(p) -> return(TLabelType3(p), state)
   }
 }
 
@@ -245,18 +295,18 @@ fn type2(t: Expr3) -> Expr2 {
   }
 }
 
-fn simplify(expr: Expr3) -> Monad(Expr3) {
+fn simplify(expr: Expr3, state: State) -> Monad(Expr3) {
   case expr {
     Downcast3(_, e, c, d) ->
       case type_eq(c, d) {
         // casting a type to itself is a no-op
-        True -> simplify(e)
+        True -> simplify(e, state)
         False ->
           case e {
             Downcast3(p, e2, a, b) ->
               case type_eq(b, c) {
                 // cast A->B then C->D (where B=C) = cast A->D
-                True -> simplify(Downcast3(p, e2, a, d))
+                True -> simplify(Downcast3(p, e2, a, d), state)
                 // cast A->B then C->D (where B!=C) is a type error since they're both downcasts
                 False -> monad.fail(TypeError(p, b, c))
               }
@@ -267,30 +317,31 @@ fn simplify(expr: Expr3) -> Monad(Expr3) {
                 True ->
                   case subtype(a, d) {
                     // A and D have a subtype s so casting up A->B then down C->D can be rewritten as casting down A->s then up s->D
-                    Ok(t) -> simplify(Upcast3(p, Downcast3(p, e2, a, t), t, d))
+                    Ok(t) ->
+                      simplify(Upcast3(p, Downcast3(p, e2, a, t), t, d), state)
                     // if there is no such subtype then casting up and then down is just changing the type, which is a type error
                     Error(Nil) -> monad.fail(TypeError(p, a, d))
                   }
-                False -> return(e)
+                False -> return(e, state)
               }
-            _ -> return(expr)
+            _ -> return(expr, state)
           }
       }
     Upcast3(_, e, t1, t2) ->
       case type_eq(t1, t2) {
-        True -> simplify(e)
+        True -> simplify(e, state)
         False ->
           case e {
             Upcast3(p, e2, t3, t4) ->
               case type_eq(t4, t1) {
-                True -> simplify(Upcast3(p, e2, t3, t2))
-                False -> return(e)
+                True -> simplify(Upcast3(p, e2, t3, t2), state)
+                False -> return(e, state)
               }
-            _ -> return(expr)
+            _ -> return(expr, state)
           }
       }
 
-    e -> return(e)
+    e -> return(e, state)
   }
 }
 

@@ -1,10 +1,16 @@
-def test0 = print(main2.hi)
+fn test0() -> int {
+  print(main2.hi())
+}
 
-def test1 = (fn(f) f(7))(fn(n: int) n) // returns 7, the first function has type dyn->dyn
+fn test1() -> int {
+  (fn(f) f(7))(fn(n: int) n) // returns 7, the first function literal has type dyn->dyn
+}
 
 // def test2 = (fn(f) f(7))(fn(g: int->int) g(7)) // this typechecks because of dyn, and crashes at runtime
 
-def test3 = (fn(f: int->int) f(7))(fn(n: int) n) // returns 7, no magic here
+fn test3() -> int {
+  (fn(f: int->int) f(7))(fn(n: int) n) // returns 7, no magic here
+}
 
 // def test4 = (fn(f: int->int) f(fn(a: int) 2))(fn(n: int) n) // type error here
 
@@ -12,6 +18,16 @@ def test3 = (fn(f: int->int) f(7))(fn(n: int) n) // returns 7, no magic here
 // the values for x and y are inferred using z and w
 // When a normal argument has no type annotation, it is given the dynamic type `dyn`
 // When an implicit argument has no type annotation, it is given the type `type`
-def id = fn[a](x: a) x
-def first = fn[a, b](x: a, y: b) x
-def test7 = first(id(id)(id(4)), fn(a) 5) // returns `4`, and `fn(a) 5` has type `dyn->int`
+fn id[a](x: a) -> a {
+  x
+}
+fn first[a, b](x: a, y: b) -> a {
+  x
+}
+fn test7() -> int {
+  first(id(id)(id(4)), fn(a) 5) // returns `4`, and `fn(a) 5` has type `dyn->int`
+}
+
+fn main() {
+  print(main2.hi())
+}

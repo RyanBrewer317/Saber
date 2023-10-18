@@ -1,99 +1,151 @@
 import core.{Error, Id}
+import gleam/io
+import gleam/string_builder.{StringBuilder}
+
+pub opaque type State {
+  State(id: Id, log: StringBuilder)
+}
 
 pub opaque type Monad(a) {
-  Monad(fn(Id) -> Result(#(a, Id), Error))
+  Cont(State, a)
+  Fail(Error)
 }
 
-pub fn fresh(f: fn(Id) -> Monad(a)) -> Monad(a) {
-  do(Monad(fn(curr_id) { Ok(#(curr_id, curr_id + 1)) }), f)
-}
-
-pub fn return(x: a) -> Monad(a) {
-  Monad(fn(curr_id) { Ok(#(x, curr_id)) })
-}
-
-pub fn do(ma: Monad(a), f: fn(a) -> Monad(b)) -> Monad(b) {
-  Monad(fn(curr_id) {
-    let Monad(g) = ma
-    case g(curr_id) {
-      Ok(#(val, curr_id)) -> {
-        let Monad(h) = f(val)
-        h(curr_id)
-      }
-      Error(e) -> Error(e)
-    }
-  })
-}
-
-pub fn lift(x: Result(a, Error)) -> Monad(a) {
-  case x {
-    Ok(val) -> Monad(fn(curr_id) { Ok(#(val, curr_id)) })
-    Error(e) -> Monad(fn(_) { Error(e) })
+pub fn do(ma: Monad(a), f: fn(a, State) -> Monad(b)) -> Monad(b) {
+  case ma {
+    Cont(state, val) -> f(val, state)
+    Fail(e) -> Fail(e)
   }
 }
 
-pub fn try(x: Result(a, Error), f: fn(a) -> Monad(b)) -> Monad(b) {
-  do(lift(x), f)
+pub fn fresh(state: State, k: fn(Id, State) -> Monad(b)) -> Monad(b) {
+  k(state.id, State(state.id + 1, state.log))
+}
+
+pub fn return(x: a, state: State) -> Monad(a) {
+  Cont(state, x)
+}
+
+pub fn try(
+  x: Result(a, Error),
+  state: State,
+  k: fn(a, State) -> Monad(b),
+) -> Monad(b) {
+  case x {
+    Ok(val) -> k(val, state)
+    Error(e) -> Fail(e)
+  }
 }
 
 pub fn fail(e: Error) -> Monad(a) {
-  Monad(fn(_) { Error(e) })
+  Fail(e)
 }
 
-pub fn run(ma: Monad(a)) -> Result(a, Error) {
-  let Monad(f) = ma
-  case f(0) {
-    Ok(#(val, _)) -> Ok(val)
-    Error(e) -> Error(e)
+pub fn eval(ma: Monad(a)) -> Result(a, Error) {
+  case ma {
+    Cont(state, val) -> {
+      io.println(string_builder.to_string(state.log))
+      Ok(val)
+    }
+    Fail(e) -> Error(e)
   }
 }
 
-pub fn map(l: List(a), f: fn(a) -> Monad(b)) -> Monad(List(b)) {
+pub fn start(k: fn(State) -> Monad(a)) -> Monad(a) {
+  k(State(0, string_builder.new()))
+}
+
+pub fn monadic_map(
+  l: List(a),
+  state: State,
+  f: fn(a, State) -> Monad(b),
+  k: fn(List(b), State) -> Monad(c),
+) -> Monad(c) {
   case l {
-    [] -> return([])
+    [] -> k([], state)
     [x, ..xs] -> {
-      use x2 <- do(f(x))
-      use xs2 <- do(map(xs, f))
-      return([x2, ..xs2])
+      case f(x, state) {
+        Cont(state2, x2) -> {
+          use xs2, state3 <- monadic_map(xs, state2, f)
+          k([x2, ..xs2], state3)
+        }
+        Fail(e) -> Fail(e)
+      }
     }
   }
 }
 
-pub fn fmap(ma: Monad(a), f: fn(a) -> b) -> Monad(b) {
-  let Monad(g) = ma
-  Monad(fn(curr_id) {
-    case g(curr_id) {
-      Ok(#(a, new_id)) -> Ok(#(f(a), new_id))
-      Error(e) -> Error(e)
-    }
-  })
+pub fn fmap(
+  ma: Monad(a),
+  f: fn(a) -> b,
+  k: fn(b, State) -> Monad(c),
+) -> Monad(c) {
+  case ma {
+    Cont(state, x) -> k(f(x), state)
+    Fail(e) -> Fail(e)
+  }
 }
 
-pub fn reduce(
+pub fn monadic_fold(
   over l: List(a),
   from base: b,
-  with f: fn(a, b) -> Monad(b),
-) -> Monad(b) {
+  using state: State,
+  with f: fn(b, a, State) -> Monad(b),
+  then k: fn(b, State) -> Monad(c),
+) -> Monad(c) {
   case l {
-    [] -> return(base)
+    [] -> k(base, state)
     [x, ..xs] -> {
-      use b2 <- do(f(x, base))
-      reduce(xs, b2, f)
+      case f(base, x, state) {
+        Cont(state2, b2) -> {
+          monadic_fold(xs, b2, state2, f, k)
+        }
+        Fail(e) -> Fail(e)
+      }
     }
   }
 }
 
-pub fn when(cond: Bool, ma: Monad(Nil)) -> Monad(Nil) {
+pub fn when(
+  cond: Bool,
+  ma: Monad(Nil),
+  state: State,
+  k: fn(State) -> Monad(a),
+) -> Monad(a) {
   case cond {
-    True -> ma
-    False -> return(Nil)
+    True ->
+      case ma {
+        Cont(state2, Nil) -> k(state2)
+        Fail(e) -> Fail(e)
+      }
+    False -> k(state)
   }
 }
 
 pub fn unwrap(ma: Monad(a)) -> a {
-  let Monad(f) = ma
-  case f(0) {
-    Ok(#(val, _)) -> val
-    Error(_) -> panic("")
+  case ma {
+    Cont(_, x) -> x
+    Fail(_) -> panic("")
   }
+}
+
+pub type DebugStatus {
+  Y
+  N
+}
+
+pub fn log(
+  msg: String,
+  state: State,
+  dbg: DebugStatus,
+  k: fn(State) -> Monad(a),
+) -> Monad(a) {
+  // io.println(msg)
+  k(State(
+    state.id,
+    case dbg {
+      Y -> string_builder.append(state.log, msg <> "\n")
+      N -> state.log
+    },
+  ))
 }
