@@ -1,7 +1,8 @@
 import core.{
   App4, Builtin4, Def4, Downcast4, Expr4, Func4, Global, Ident, Ident4, Import4,
-  Int4, Library4, Local, Module4, ModuleAccess4, Stmt4, TDynamic4, TKind4,
-  TLabelKind4, TLabelType4, TPi4, TType4, Upcast4, ident_to_str,
+  Int4, Library4, Local, Module4, ModuleAccess4, Stmt4, Struct4, StructAccess4,
+  TDynamic4, TKind4, TLabelKind4, TLabelType4, TPi4, TStruct4, TType4, Upcast4,
+  ident_to_str,
 }
 import monad.{Monad, State, do, monadic_fold, monadic_map, return}
 import gleam/list
@@ -110,6 +111,12 @@ fn expr(
       let assert Ok(val) = map.get(sub_defs, Global(field))
       return(val, state2)
     }
+    StructAccess4(_, _, e, field) -> {
+      use e2, state2 <- do(expr(e, mod, heap, state))
+      let assert Struct4(_, _, fields) = e2
+      let assert Ok(#(_, val)) = list.find(fields, fn(f) { f.0 == field })
+      return(val, state2)
+    }
     // no eta reduction
     Func4(p, t, args, body) -> {
       use t2, state2 <- do(expr(t, mod, heap, state))
@@ -185,5 +192,28 @@ fn expr(
     TKind4(_) -> return(e, state)
     TLabelType4(_) -> return(e, state)
     TLabelKind4(_) -> return(e, state)
+    Struct4(p, t, fields) -> {
+      use t2, state2 <- do(expr(t, mod, heap, state))
+      use fields2, state3 <- monadic_map(
+        fields,
+        state2,
+        fn(f, statex) {
+          use val, statex2 <- do(expr(f.1, mod, heap, statex))
+          return(#(f.0, val), statex2)
+        },
+      )
+      return(Struct4(p, t2, fields2), state3)
+    }
+    TStruct4(p, fields) -> {
+      use fields2, state2 <- monadic_map(
+        fields,
+        state,
+        fn(f, statex) {
+          use t, statex2 <- do(expr(f.1, mod, heap, statex))
+          return(#(f.0, t), statex2)
+        },
+      )
+      return(TStruct4(p, fields2), state2)
+    }
   }
 }

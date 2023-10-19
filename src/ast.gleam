@@ -1,8 +1,9 @@
 import core.{
   App1, App2, Builtin1, Builtin2, Def1, Def2, DotAccess1, Expr1, Expr2, Func1,
   Func2, Global, Id, Ident1, Ident2, Import1, Import2, Int1, Int2, Library1,
-  Library2, Local, Module1, Module2, ModuleAccess2, Stmt1, Stmt2, TDynamic1,
-  TDynamic2, TLabelType2, TPi1, TPi2, TType2, Undefined,
+  Library2, Local, Module1, Module2, ModuleAccess2, Stmt1, Stmt2, Struct1,
+  Struct2, TDynamic1, TDynamic2, TLabelType2, TPi1, TPi2, TStruct1, TStruct2,
+  TType2, Undefined, StructAccess2
 }
 import monad.{Monad, State, do, fail, fresh, monadic_fold, monadic_map, return}
 import gleam/list
@@ -81,7 +82,10 @@ fn expr(e: Expr1, renames: Renames, mod: Module1, state: State) -> Monad(Expr2) 
       }
     Builtin1(p, name) -> return(Builtin2(p, name), state)
     DotAccess1(p, e2, field) -> {
-      let not_module = fn() { todo }
+      let not_module = fn(statex) {
+        use e22, statex2 <- do(expr(e2, renames, mod, statex))
+        return(StructAccess2(p, e22, field), statex2)
+      }
       let is_mod = fn(name) {
         list.find(mod.subs, fn(sub) { sub.path == mod.path <> "/" <> name })
       }
@@ -93,10 +97,10 @@ fn expr(e: Expr1, renames: Renames, mod: Module1, state: State) -> Monad(Expr2) 
                 Ok(_) -> return(ModuleAccess2(p, sub.path, field), state)
                 Error(Nil) -> fail(Undefined(mod.path, p, name <> "." <> field))
               }
-            Error(Nil) -> not_module()
+            Error(Nil) -> not_module(state)
           }
         }
-        _ -> not_module()
+        _ -> not_module(state)
       }
     }
     Func1(p, imp_args, args, body) -> {
@@ -172,5 +176,27 @@ fn expr(e: Expr1, renames: Renames, mod: Module1, state: State) -> Monad(Expr2) 
       )
     }
     TDynamic1(p) -> return(TDynamic2(p), state)
+    Struct1(p, fields) -> {
+      use fields2, state2 <- monadic_map(
+        fields,
+        state,
+        fn(f, statex) {
+          use val, statex2 <- do(expr(f.1, renames, mod, statex))
+          return(#(f.0, val), statex2)
+        },
+      )
+      return(Struct2(p, fields2), state2)
+    }
+    TStruct1(p, fields) -> {
+      use fields2, state2 <- monadic_map(
+        fields,
+        state,
+        fn(f, statex) {
+          use t, statex2 <- do(expr(f.1, renames, mod, statex))
+          return(#(f.0, t), statex2)
+        },
+      )
+      return(TStruct2(p, fields2), state2)
+    }
   }
 }

@@ -1,9 +1,10 @@
 import core.{
   App3, App4, Builtin3, Builtin4, Def3, Def4, Downcast3, Downcast4, Expr3, Expr4,
   Func3, Func4, Ident3, Ident4, Import3, Import4, Int3, Int4, Library3, Library4,
-  Module3, Module4, ModuleAccess3, ModuleAccess4, Stmt3, Stmt4, TDynamic3,
-  TDynamic4, TKind3, TKind4, TLabelKind3, TLabelKind4, TLabelType3, TLabelType4,
-  TPi3, TPi4, TType3, TType4, Upcast3, Upcast4,
+  Module3, Module4, ModuleAccess3, ModuleAccess4, Stmt3, Stmt4, Struct3, Struct4,
+  StructAccess3, StructAccess4, TDynamic3, TDynamic4, TKind3, TKind4,
+  TLabelKind3, TLabelKind4, TLabelType3, TLabelType4, TPi3, TPi4, TStruct3,
+  TStruct4, TType3, TType4, Upcast3, Upcast4,
 }
 import monad.{Monad, State, do, monadic_fold, monadic_map, return}
 import gleam/list
@@ -63,6 +64,11 @@ fn expr(e: Expr3, state: State) -> Monad(Expr4) {
       use t2, state2 <- do(expr(t, state))
       return(ModuleAccess4(p, t2, module_name, field), state2)
     }
+    StructAccess3(p, t, e, field) -> {
+      use e2, state2 <- do(expr(e, state))
+      use t2, state3 <- do(expr(t, state2))
+      return(StructAccess4(p, t2, e2, field), state3)
+    }
     Func3(p, t, imp_args, args, body) -> {
       use t2, state2 <- do(expr(t, state))
       let imp_args2 = list.map(imp_args, fn(a) { #(a, TType4(p)) })
@@ -115,5 +121,28 @@ fn expr(e: Expr3, state: State) -> Monad(Expr4) {
     TKind3(p) -> return(TKind4(p), state)
     TLabelType3(p) -> return(TLabelType4(p), state)
     TLabelKind3(p) -> return(TLabelKind4(p), state)
+    Struct3(p, t, fields) -> {
+      use fields2, state2 <- monadic_map(
+        fields,
+        state,
+        fn(f, statex) {
+          use val, statex2 <- do(expr(f.1, statex))
+          return(#(f.0, val), statex2)
+        },
+      )
+      use t2, state3 <- do(expr(t, state2))
+      return(Struct4(p, t2, fields2), state3)
+    }
+    TStruct3(p, fields) -> {
+      use fields2, state2 <- monadic_map(
+        fields,
+        state,
+        fn(f, statex) {
+          use t, statex2 <- do(expr(f.1, statex))
+          return(#(f.0, t), statex2)
+        },
+      )
+      return(TStruct4(p, fields2), state2)
+    }
   }
 }

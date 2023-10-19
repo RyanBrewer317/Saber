@@ -1,11 +1,12 @@
-import monad.{Monad, State, do, monadic_fold, monadic_map, return}
+import monad.{Monad, State, do, fail, monadic_fold, monadic_map, return}
 import core.{
   App2, App3, Builtin2, Builtin3, CallingNonFunction, CallingWrongArity, Def2,
   Def3, Downcast3, Expr2, Expr3, Func2, Func3, Global, Id, Ident, Ident2, Ident3,
   Import2, Import3, Int2, Int3, Library2, Library3, Local, Module2, Module3,
-  ModuleAccess2, ModuleAccess3, Stmt2, Stmt3, TDynamic2, TDynamic3, TLabelType2,
-  TLabelType3, TPi2, TPi3, TType2, TType3, TypeError, Upcast3, contains3,
-  ident_to_str, substitute, type_eq, typeof,
+  ModuleAccess2, ModuleAccess3, Stmt2, Stmt3, Struct2, Struct3, StructAccess2,
+  StructAccess3, TDynamic2, TDynamic3, TLabelType2, TLabelType3, TPi2, TPi3,
+  TStruct2, TStruct3, TType2, TType3, TypeError, UnknownStructField, Upcast3,
+  contains3, ident_to_str, substitute, type_eq, typeof,
 }
 import gleam/map.{Map, get, insert}
 import gleam/result
@@ -273,8 +274,42 @@ fn expr(
       )
       return(ModuleAccess3(p, t, path, field), state2)
     }
+    StructAccess2(p, e, field) -> {
+      use e2, state2 <- do(expr(gamma, e, mod, state))
+      case typeof(e2) {
+        TStruct3(_, fields) ->
+          case list.find(fields, fn(f) { f.0 == field }) {
+            Ok(#(_, t)) -> return(StructAccess3(p, t, e2, field), state2)
+            Error(Nil) -> fail(UnknownStructField(p, typeof(e2), field))
+          }
+        _ -> fail(UnknownStructField(p, typeof(e2), field))
+      }
+    }
     TDynamic2(p) -> return(TDynamic3(p), state)
     TLabelType2(p) -> return(TLabelType3(p), state)
+    Struct2(p, fields) -> {
+      use fields2, state2 <- monadic_map(
+        fields,
+        state,
+        fn(f, statex) {
+          use val, statex2 <- do(expr(gamma, f.1, mod, statex))
+          return(#(f.0, val), statex2)
+        },
+      )
+      let ts = list.map(fields2, fn(f) { #(f.0, typeof(f.1)) })
+      return(Struct3(p, TStruct3(p, ts), fields2), state2)
+    }
+    TStruct2(p, fields) -> {
+      use fields2, state2 <- monadic_map(
+        fields,
+        state,
+        fn(f, statex) {
+          use t, statex2 <- do(expr(gamma, f.1, mod, statex))
+          return(#(f.0, t), statex2)
+        },
+      )
+      return(TStruct3(p, fields2), state2)
+    }
   }
 }
 

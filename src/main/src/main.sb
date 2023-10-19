@@ -1,7 +1,3 @@
-fn test0() -> int {
-  print(main2.hi())
-}
-
 fn test1() -> int {
   (fn(f) f(7))(fn(n: int) n) // returns 7, the first function literal has type dyn->dyn
 }
@@ -18,16 +14,16 @@ fn test3() -> int {
 // the values for x and y are inferred using z and w
 // When a normal argument has no type annotation, it is given the dynamic type `dyn`
 // When an implicit argument has no type annotation, it is given the type `type`
-fn id[a](x: a) -> a {
-  x
-}
-fn first[a, b](x: a, y: b) -> a {
-  x
-}
+// Good examples are in main2/main2.sb, and used below
+
 fn test7() -> int {
-  first(id(id)(id(4)), fn(a) 5) // returns `4`, and `fn(a) 5` has type `dyn->int`
+  main2.first(main2.id(main2.id)(main2.id(4)), fn(a) 5) // returns `4`, and `fn(a) 5` has type `dyn->int`
+}
+
+fn test8(age: int) -> struct{age: int, size: int} {
+  {age: age, size: 7}
 }
 
 fn main() {
-  print(main2.hi())
+  print(test8(20).size)
 }
