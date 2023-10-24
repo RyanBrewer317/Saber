@@ -16,14 +16,27 @@ fn test3() -> int {
 // When an implicit argument has no type annotation, it is given the type `type`
 // Good examples are in main2/main2.sb, and used below
 
+// use of imports (very wip)
 fn test7() -> int {
   main2.first(main2.id(main2.id)(main2.id(4)), fn(a) 5) // returns `4`, and `fn(a) 5` has type `dyn->int`
 }
 
+// structs and struct types
 fn test8(age: int) -> struct{age: int, size: int} {
   {age: age, size: 7}
 }
 
+// demo of sigma-type nature of function arguments 
+// (function types are always `Pi x: Sigma(...). T(x)`)
+fn test9(t: type, x: t) -> t {
+  x
+}
+
+// dependent types work at the moment, as I haven't banned the (*,square) rule in the PTS yet
+fn test10(x: int) -> type {
+  int // there isn't really a way to make use of DT without ADTs, so this is a constant function
+}
+
 fn main() {
-  print(test8(20).size)
+  print(test9(test10(3), test8(20).size))
 }

@@ -1,8 +1,7 @@
 import core.{
   App4, Builtin4, Def4, Downcast4, Expr4, Func4, Global, Ident, Ident4, Import4,
   Int4, Library4, Local, Module4, ModuleAccess4, Stmt4, Struct4, StructAccess4,
-  TDynamic4, TKind4, TLabelKind4, TLabelType4, TPi4, TStruct4, TType4, Upcast4,
-  ident_to_str,
+  TDynamic4, TKind4, TPi4, TStruct4, TType4, Upcast4, ident_to_str,
 }
 import monad.{Monad, State, do, monadic_fold, monadic_map, return}
 import gleam/list
@@ -24,30 +23,30 @@ type Expr =
   Expr4
 
 pub fn eval_lib(lib: Library, state: State) -> Monad(Nil) {
-  use defs, state2 <- do(eval_mod(lib.entry, state))
+  use defs, state <- do(eval_mod(lib.entry, state))
   case get(defs, Global("main")) {
     Ok(Func4(_, _, [], body)) -> {
-      use _, state3 <- do(expr(body, lib.entry, defs, state2))
-      return(Nil, state3)
+      use _, state <- do(expr(body, lib.entry, defs, state))
+      return(Nil, state)
     }
     Ok(_) -> panic("")
-    Error(Nil) -> return(Nil, state2)
+    Error(Nil) -> return(Nil, state)
   }
 }
 
 fn eval_mod(mod: Module, state: State) -> Monad(Map(Ident, Expr4)) {
   let assert [s, ..ss] = mod.ast
-  use start_heap, state2 <- do(stmt(s, mod, map.new(), state))
-  use heap, state3 <- monadic_fold(
+  use start_heap, state <- do(stmt(s, mod, map.new(), state))
+  use heap, state <- monadic_fold(
     ss,
     start_heap,
-    state2,
-    fn(heap, s, statex) {
-      use heap2, statex2 <- do(stmt(s, mod, heap, statex))
-      return(map.merge(heap2, heap), statex2)
+    state,
+    fn(heap, s, state) {
+      use heap2, state <- do(stmt(s, mod, heap, state))
+      return(map.merge(heap2, heap), state)
     },
   )
-  return(heap, state3)
+  return(heap, state)
 }
 
 fn stmt(
@@ -58,22 +57,22 @@ fn stmt(
 ) -> Monad(Map(Ident, Expr)) {
   case s {
     Def4(_, name, val) -> {
-      use val2, state2 <- do(expr(
+      use val2, state <- do(expr(
         val,
         mod,
         insert(heap, Global(name), val),
         state,
       ))
-      return(insert(map.new(), Global(name), val2), state2)
+      return(insert(map.new(), Global(name), val2), state)
     }
     Import4(_, name) -> {
-      use heap2, state2 <- do(eval_mod(
+      use heap2, state <- do(eval_mod(
         mod.subs
         |> list.find(fn(m) { m.path == mod.path <> "/" <> name })
         |> result.lazy_unwrap(fn() { panic("module not found") }),
         state,
       ))
-      return(heap2, state2)
+      return(heap2, state)
     }
   }
 }
@@ -99,49 +98,49 @@ fn expr(
           )
       }
     Builtin4(p, t, n) -> {
-      use t2, state2 <- do(expr(t, mod, heap, state))
-      return(Builtin4(p, t2, n), state2)
+      use t2, state <- do(expr(t, mod, heap, state))
+      return(Builtin4(p, t2, n), state)
     }
     ModuleAccess4(_, _, path, field) -> {
       let sub =
         mod.subs
         |> list.find(fn(m) { m.path == path })
         |> result.lazy_unwrap(fn() { panic("module not found") })
-      use sub_defs, state2 <- do(eval_mod(sub, state))
+      use sub_defs, state <- do(eval_mod(sub, state))
       let assert Ok(val) = map.get(sub_defs, Global(field))
-      return(val, state2)
+      return(val, state)
     }
     StructAccess4(_, _, e, field) -> {
-      use e2, state2 <- do(expr(e, mod, heap, state))
+      use e2, state <- do(expr(e, mod, heap, state))
       let assert Struct4(_, _, fields) = e2
       let assert Ok(#(_, val)) = list.find(fields, fn(f) { f.0 == field })
-      return(val, state2)
+      return(val, state)
     }
     // no eta reduction
     Func4(p, t, args, body) -> {
-      use t2, state2 <- do(expr(t, mod, heap, state))
-      use #(args2, _), state3 <- monadic_fold(
+      use t2, state <- do(expr(t, mod, heap, state))
+      use #(args2, _), state <- monadic_fold(
         args,
         #([], heap),
-        state2,
-        fn(s, a, statex) {
+        state,
+        fn(s, a, state) {
           let #(args_so_far, heap_so_far) = s
           let #(argid, argt) = a
-          use argt2, statex2 <- do(expr(argt, mod, heap_so_far, statex))
+          use argt2, state <- do(expr(argt, mod, heap_so_far, state))
           return(
             #([a, ..args_so_far], insert(heap_so_far, Local(argid), argt2)),
-            statex2,
+            state,
           )
         },
       )
-      return(Func4(p, t2, list.reverse(args2), body), state3)
+      return(Func4(p, t2, list.reverse(args2), body), state)
     }
     App4(_, _, func, args) -> {
-      use func2, state2 <- do(expr(func, mod, heap, state))
-      use args2, state3 <- monadic_map(
+      use func2, state <- do(expr(func, mod, heap, state))
+      use args2, state <- monadic_map(
         args,
-        state2,
-        fn(a, statex) { expr(a, mod, heap, statex) },
+        state,
+        fn(a, state) { expr(a, mod, heap, state) },
       )
       case func2 {
         Func4(_, _, formal_args, body) ->
@@ -153,17 +152,17 @@ fn expr(
               heap,
               fn(a, b) { map.insert(a, Local({ b.0 }.0), b.1) },
             ),
-            state3,
+            state,
           )
         Builtin4(_, _, "print") -> {
-          use args3, state4 <- monadic_map(
+          use args3, state <- monadic_map(
             args,
-            state3,
-            fn(a, statex) { expr(a, mod, heap, statex) },
+            state,
+            fn(a, state) { expr(a, mod, heap, state) },
           )
           let assert [Int4(p, i)] = args3
           io.println(string.inspect(i))
-          return(Int4(p, i), state4)
+          return(Int4(p, i), state)
         }
         _ -> panic("application of non-function")
       }
@@ -171,49 +170,47 @@ fn expr(
     Downcast4(_, e, _, _) | Upcast4(_, e, _, _) -> expr(e, mod, heap, state)
     // no eta reduction
     TPi4(p, args, body) -> {
-      use #(args2, _), state2 <- monadic_fold(
+      use #(args2, _), state <- monadic_fold(
         args,
         #([], heap),
         state,
-        fn(s, a, statex) {
+        fn(s, a, state) {
           let #(args_so_far, heap_so_far) = s
           let #(argid, argt) = a
-          use argt2, statex2 <- do(expr(argt, mod, heap_so_far, statex))
+          use argt2, state <- do(expr(argt, mod, heap_so_far, state))
           return(
             #([a, ..args_so_far], insert(heap_so_far, Local(argid), argt2)),
-            statex2,
+            state,
           )
         },
       )
-      return(TPi4(p, list.reverse(args2), body), state2)
+      return(TPi4(p, list.reverse(args2), body), state)
     }
     TDynamic4(_) -> return(e, state)
     TType4(_) -> return(e, state)
     TKind4(_) -> return(e, state)
-    TLabelType4(_) -> return(e, state)
-    TLabelKind4(_) -> return(e, state)
     Struct4(p, t, fields) -> {
-      use t2, state2 <- do(expr(t, mod, heap, state))
-      use fields2, state3 <- monadic_map(
-        fields,
-        state2,
-        fn(f, statex) {
-          use val, statex2 <- do(expr(f.1, mod, heap, statex))
-          return(#(f.0, val), statex2)
-        },
-      )
-      return(Struct4(p, t2, fields2), state3)
-    }
-    TStruct4(p, fields) -> {
-      use fields2, state2 <- monadic_map(
+      use t2, state <- do(expr(t, mod, heap, state))
+      use fields2, state <- monadic_map(
         fields,
         state,
-        fn(f, statex) {
-          use t, statex2 <- do(expr(f.1, mod, heap, statex))
-          return(#(f.0, t), statex2)
+        fn(f, state) {
+          use val, state <- do(expr(f.1, mod, heap, state))
+          return(#(f.0, val), state)
         },
       )
-      return(TStruct4(p, fields2), state2)
+      return(Struct4(p, t2, fields2), state)
+    }
+    TStruct4(p, fields) -> {
+      use fields2, state <- monadic_map(
+        fields,
+        state,
+        fn(f, state) {
+          use t, state <- do(expr(f.1, mod, heap, state))
+          return(#(f.0, t), state)
+        },
+      )
+      return(TStruct4(p, fields2), state)
     }
   }
 }

@@ -1,4 +1,4 @@
-import core.{Error, Id}
+import core.{Error, ExtendedError, Id}
 import gleam/io
 import gleam/string_builder.{StringBuilder}
 
@@ -65,9 +65,9 @@ pub fn monadic_map(
     [] -> k([], state)
     [x, ..xs] -> {
       case f(x, state) {
-        Cont(state2, x2) -> {
-          use xs2, state3 <- monadic_map(xs, state2, f)
-          k([x2, ..xs2], state3)
+        Cont(state, x2) -> {
+          use xs2, state <- monadic_map(xs, state, f)
+          k([x2, ..xs2], state)
         }
         Fail(e) -> Fail(e)
       }
@@ -75,13 +75,9 @@ pub fn monadic_map(
   }
 }
 
-pub fn fmap(
-  ma: Monad(a),
-  f: fn(a) -> b,
-  k: fn(b, State) -> Monad(c),
-) -> Monad(c) {
+pub fn fmap(ma: Monad(a), f: fn(a) -> b) -> Monad(b) {
   case ma {
-    Cont(state, x) -> k(f(x), state)
+    Cont(state, x) -> Cont(state, f(x))
     Fail(e) -> Fail(e)
   }
 }
@@ -97,8 +93,8 @@ pub fn monadic_fold(
     [] -> k(base, state)
     [x, ..xs] -> {
       case f(base, x, state) {
-        Cont(state2, b2) -> {
-          monadic_fold(xs, b2, state2, f, k)
+        Cont(state, b2) -> {
+          monadic_fold(xs, b2, state, f, k)
         }
         Fail(e) -> Fail(e)
       }
@@ -115,7 +111,7 @@ pub fn when(
   case cond {
     True ->
       case ma {
-        Cont(state2, Nil) -> k(state2)
+        Cont(state, Nil) -> k(state)
         Fail(e) -> Fail(e)
       }
     False -> k(state)
@@ -129,23 +125,16 @@ pub fn unwrap(ma: Monad(a)) -> a {
   }
 }
 
-pub type DebugStatus {
-  Y
-  N
+pub fn log(msg: a) -> a {
+  io.debug(msg)
+  msg
 }
 
-pub fn log(
-  msg: String,
-  state: State,
-  dbg: DebugStatus,
-  k: fn(State) -> Monad(a),
-) -> Monad(a) {
+pub fn label(msg: String, state: State, k: fn(State) -> Monad(a)) -> Monad(a) {
   // io.println(msg)
-  k(State(
-    state.id,
-    case dbg {
-      Y -> string_builder.append(state.log, msg <> "\n")
-      N -> state.log
-    },
-  ))
+  let x = k(state)
+  case x {
+    Cont(_, _) -> x
+    Fail(e) -> Fail(ExtendedError(e, msg))
+  }
 }

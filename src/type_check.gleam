@@ -4,39 +4,39 @@ import core.{
   Def3, Downcast3, Expr2, Expr3, Func2, Func3, Global, Id, Ident, Ident2, Ident3,
   Import2, Import3, Int2, Int3, Library2, Library3, Local, Module2, Module3,
   ModuleAccess2, ModuleAccess3, Stmt2, Stmt3, Struct2, Struct3, StructAccess2,
-  StructAccess3, TDynamic2, TDynamic3, TLabelType2, TLabelType3, TPi2, TPi3,
-  TStruct2, TStruct3, TType2, TType3, TypeError, UnknownStructField, Upcast3,
-  contains3, ident_to_str, substitute, type_eq, typeof,
+  StructAccess3, TDynamic2, TDynamic3, TKind3, TPi2, TPi3, TStruct2, TStruct3,
+  TType2, TType3, TypeError, UnknownStructField, Upcast3, contains3,
+  ident_to_str, substitute, type_eq, typeof,
 }
 import gleam/map.{Map, get, insert}
 import gleam/result
 import gleam/list
 
 pub fn annotate_lib(lib2: Library2, state: State) -> Monad(Library3) {
-  use entry, state2 <- do(annotate_mod(lib2.entry, state))
-  return(Library3(lib2.path, entry), state2)
+  use entry, state <- do(annotate_mod(lib2.entry, state))
+  return(Library3(lib2.path, entry), state)
 }
 
 fn annotate_mod(mod2: Module2, state: State) -> Monad(Module3) {
-  use #(ast, gamma), state2 <- monadic_fold(
+  use #(ast, gamma, defs), state <- monadic_fold(
     mod2.ast,
-    #([], map.new()),
+    #([], map.new(), map.new()),
     state,
-    fn(so_far, s, statex) {
-      let #(ast, gamma) = so_far
-      use #(s2, gamma2), statex2 <- do(stmt(s, gamma, mod2, statex))
-      return(#([s2, ..ast], gamma2), statex2)
+    fn(so_far, s, state) {
+      let #(ast, gamma, defs) = so_far
+      use #(s2, gamma, defs), state <- do(stmt(s, gamma, mod2, defs, state))
+      return(#([s2, ..ast], gamma, defs), state)
     },
   )
-  use subs, state3 <- monadic_map(mod2.subs, state2, annotate_mod)
+  use subs, state <- monadic_map(mod2.subs, state, annotate_mod)
   let symbol_table =
     map.map_values(
       mod2.symbol_table,
-      fn(_, v) { monad.unwrap(expr(gamma, v, mod2, state3)) },
+      fn(_, v) { monad.unwrap(expr(gamma, v, mod2, defs, state)) },
     )
   return(
     Module3(mod2.path, subs, symbol_table, mod2.files, list.reverse(ast)),
-    state3,
+    state,
   )
 }
 
@@ -44,20 +44,25 @@ fn stmt(
   s: Stmt2,
   gamma: Map(Ident, Expr3),
   mod: Module2,
+  defs: Map(Ident, Expr3),
   state: State,
-) -> Monad(#(Stmt3, Map(Ident, Expr3))) {
+) -> Monad(#(Stmt3, Map(Ident, Expr3), Map(Ident, Expr3))) {
   case s {
     Def2(p, name, val) -> {
-      use val2, state2 <- do(
+      use val2, state <- do(
         gamma
-        |> expr(val, mod, state),
+        |> expr(val, mod, defs, state),
       )
       return(
-        #(Def3(p, name, val2), insert(gamma, Global(name), typeof(val2))),
-        state2,
+        #(
+          Def3(p, name, val2),
+          insert(gamma, Global(name), typeof(val2)),
+          insert(defs, Global(name), val2),
+        ),
+        state,
       )
     }
-    Import2(p, name) -> return(#(Import3(p, name), gamma), state)
+    Import2(p, name) -> return(#(Import3(p, name), gamma, defs), state)
   }
 }
 
@@ -65,6 +70,7 @@ fn expr(
   gamma: Map(Ident, Expr3),
   e: Expr2,
   mod: Module2,
+  defs: Map(Ident, Expr3),
   state: State,
 ) -> Monad(Expr3) {
   case e {
@@ -81,8 +87,8 @@ fn expr(
             Global(name) ->
               case map.get(mod.symbol_table, name) {
                 Ok(t) -> {
-                  use t2, state2 <- do(expr(gamma, t, mod, state))
-                  return(Ident3(p, t2, id), state2)
+                  use t2, state <- do(expr(gamma, t, mod, defs, state))
+                  return(Ident3(p, t2, id), state)
                 }
                 Error(Nil) ->
                   panic(
@@ -94,54 +100,72 @@ fn expr(
 
     App2(p, func, args) -> {
       // prove gamma |- func2: typeof(func2)
-      use func2, state2 <- do(expr(gamma, func, mod, state))
+      use func2, state <- do(expr(gamma, func, mod, defs, state))
       case typeof(func2) {
         TPi3(_, imp_args, formal_args, ret_t) -> {
-          use state3 <- monad.when(
+          use state <- monad.when(
             list.length(formal_args) != list.length(args),
             monad.fail(CallingWrongArity(p, typeof(func2), list.length(args))),
-            state2,
+            state,
           )
-          use args2, state4 <- monadic_map(
+          use args, state <- monadic_map(
             args,
-            state3,
-            fn(a, statex) { expr(gamma, a, mod, statex) },
+            state,
+            fn(a, state) {
+              use a2, state <- do(expr(gamma, a, mod, defs, state))
+              return(a2, state)
+            },
           )
-          let solutions = solve(imp_args, formal_args, args2)
-          use supplied_imp_args, state5 <- monadic_map(
+          let solutions = solve(imp_args, formal_args, args)
+          use supplied_imp_args, state <- monadic_map(
             imp_args,
-            state4,
-            fn(a, statex) {
+            state,
+            fn(a, state) {
               return(
                 result.lazy_unwrap(
                   map.get(solutions, a),
                   or: fn() { panic("No solution found for implicit argument") },
                 ),
-                statex,
+                state,
               )
             },
           )
-          let formal_args2 =
+          let solutions =
+            list.fold(
+              list.zip(formal_args, args),
+              solutions,
+              fn(sols, a) {
+                let #(#(formal, _), actual) = a
+                insert(sols, formal, actual)
+              },
+            )
+          let formal_args =
             list.map(formal_args, fn(a) { #(a.0, instantiate(solutions, a.1)) })
-          use args3, state6 <- monadic_map(
+          use args, state <- monadic_map(
             list.zip(
               list.append(
                 list.map(imp_args, fn(i) { #(i, TType3(p)) }),
-                formal_args2,
+                formal_args,
               ),
-              list.append(supplied_imp_args, args2),
+              list.append(supplied_imp_args, args),
             ),
-            state5,
-            fn(a, statex) {
+            state,
+            fn(a, state) {
               let #(#(_, argt), actual_arg) = a
+              use argt, state <- do(eval(argt, defs, state))
+              use actual_arg_t, state <- do(eval(
+                typeof(actual_arg),
+                defs,
+                state,
+              ))
               simplify(
                 Downcast3(
                   p,
-                  Upcast3(p, actual_arg, typeof(actual_arg), TDynamic3(p)),
+                  Upcast3(p, actual_arg, actual_arg_t, TDynamic3(p)),
                   TDynamic3(p),
                   argt,
                 ),
-                statex,
+                state,
               )
             },
           )
@@ -150,7 +174,7 @@ fn expr(
               p,
               list.fold(
                 list.append(
-                  list.zip(formal_args2, args3),
+                  list.zip(formal_args, args),
                   list.zip(
                     list.map(imp_args, fn(a) { #(a, TType3(p)) }),
                     supplied_imp_args,
@@ -163,16 +187,16 @@ fn expr(
                 },
               ),
               func2,
-              args3,
+              args,
             ),
-            state6,
+            state,
           )
         }
         TDynamic3(p) -> {
-          use args2, state3 <- monadic_map(
+          use args, state <- monadic_map(
             args,
-            state2,
-            fn(a, statex) { expr(gamma, a, mod, statex) },
+            state,
+            fn(a, state) { expr(gamma, a, mod, defs, state) },
           )
           return(
             App3(
@@ -185,13 +209,13 @@ fn expr(
                 TPi3(
                   p,
                   [],
-                  list.map(args2, fn(a) { #(-1, typeof(a)) }),
+                  list.map(args, fn(a) { #(-1, typeof(a)) }),
                   TDynamic3(p),
                 ),
               ),
-              args2,
+              args,
             ),
-            state3,
+            state,
           )
         }
         t -> monad.fail(CallingNonFunction(t))
@@ -214,51 +238,59 @@ fn expr(
         state,
       )
     Func2(p, imp_args, args, body) -> {
-      let gamma2 =
+      let gamma =
         list.fold(imp_args, gamma, fn(g, a) { insert(g, Local(a), TType3(p)) })
-      use args2, state2 <- monadic_map(
+      use #(args_rev, gamma), state <- monadic_fold(
         args,
+        #([], gamma),
         state,
-        fn(a, statex) {
-          use a2, statex2 <- do(expr(gamma2, a.1, mod, statex))
-          return(#(a.0, a2), statex2)
+        fn(s, a, state) {
+          let #(so_far, gamma) = s
+          let #(argid, argt) = a
+          use argt2, state <- do(expr(gamma, argt, mod, defs, state))
+          return(
+            #([#(argid, argt2), ..so_far], insert(gamma, Local(argid), argt2)),
+            state,
+          )
         },
       )
-      let gamma3 =
-        list.fold(args2, gamma2, fn(g, a) { insert(g, Local(a.0), a.1) })
-      use body2, state3 <- do(
-        gamma3
-        |> expr(body, mod, state2),
+      let args = list.reverse(args_rev)
+      let gamma =
+        list.fold(args, gamma, fn(g, a) { insert(g, Local(a.0), a.1) })
+      use body2, state <- do(
+        gamma
+        |> expr(body, mod, defs, state),
       )
       return(
-        Func3(
-          p,
-          TPi3(p, imp_args, args2, typeof(body2)),
-          imp_args,
-          args2,
-          body2,
-        ),
-        state3,
+        Func3(p, TPi3(p, imp_args, args, typeof(body2)), imp_args, args, body2),
+        state,
       )
     }
     TPi2(p, imp_args, args, body) -> {
-      let gamma2 =
+      let gamma =
         list.fold(imp_args, gamma, fn(g, a) { insert(g, Local(a), TType3(p)) })
-      use args2, state2 <- monadic_map(
+      use #(args_rev, gamma), state <- monadic_fold(
         args,
+        #([], gamma),
         state,
-        fn(a, statex) {
-          use a2, statex2 <- do(expr(gamma2, a.1, mod, statex))
-          return(#(a.0, a2), statex2)
+        fn(s, a, state) {
+          let #(so_far, gamma) = s
+          let #(argid, argt) = a
+          use argt2, state <- do(expr(gamma, argt, mod, defs, state))
+          return(
+            #([#(argid, argt2), ..so_far], insert(gamma, Local(argid), argt2)),
+            state,
+          )
         },
       )
-      let gamma3 =
-        list.fold(args2, gamma2, fn(g, a) { insert(g, Local(a.0), a.1) })
-      use body2, state3 <- do(
-        gamma3
-        |> expr(body, mod, state2),
+      let args = list.reverse(args_rev)
+      let gamma =
+        list.fold(args, gamma, fn(g, a) { insert(g, Local(a.0), a.1) })
+      use body2, state <- do(
+        gamma
+        |> expr(body, mod, defs, state),
       )
-      return(TPi3(p, imp_args, args2, body2), state3)
+      return(TPi3(p, imp_args, args, body2), state)
     }
     ModuleAccess2(p, path, field) -> {
       let sub =
@@ -268,47 +300,46 @@ fn expr(
       let thing =
         map.get(sub.symbol_table, field)
         |> result.lazy_unwrap(fn() { panic("undefined") })
-      use t, state2 <- do(
+      use t, state <- do(
         gamma
-        |> expr(thing, mod, state),
+        |> expr(thing, mod, defs, state),
       )
-      return(ModuleAccess3(p, t, path, field), state2)
+      return(ModuleAccess3(p, t, path, field), state)
     }
     StructAccess2(p, e, field) -> {
-      use e2, state2 <- do(expr(gamma, e, mod, state))
+      use e2, state <- do(expr(gamma, e, mod, defs, state))
       case typeof(e2) {
         TStruct3(_, fields) ->
           case list.find(fields, fn(f) { f.0 == field }) {
-            Ok(#(_, t)) -> return(StructAccess3(p, t, e2, field), state2)
+            Ok(#(_, t)) -> return(StructAccess3(p, t, e2, field), state)
             Error(Nil) -> fail(UnknownStructField(p, typeof(e2), field))
           }
         _ -> fail(UnknownStructField(p, typeof(e2), field))
       }
     }
     TDynamic2(p) -> return(TDynamic3(p), state)
-    TLabelType2(p) -> return(TLabelType3(p), state)
     Struct2(p, fields) -> {
-      use fields2, state2 <- monadic_map(
+      use fields2, state <- monadic_map(
         fields,
         state,
-        fn(f, statex) {
-          use val, statex2 <- do(expr(gamma, f.1, mod, statex))
-          return(#(f.0, val), statex2)
+        fn(f, state) {
+          use val, state <- do(expr(gamma, f.1, mod, defs, state))
+          return(#(f.0, val), state)
         },
       )
       let ts = list.map(fields2, fn(f) { #(f.0, typeof(f.1)) })
-      return(Struct3(p, TStruct3(p, ts), fields2), state2)
+      return(Struct3(p, TStruct3(p, ts), fields2), state)
     }
     TStruct2(p, fields) -> {
-      use fields2, state2 <- monadic_map(
+      use fields2, state <- monadic_map(
         fields,
         state,
-        fn(f, statex) {
-          use t, statex2 <- do(expr(gamma, f.1, mod, statex))
-          return(#(f.0, t), statex2)
+        fn(f, state) {
+          use t, state <- do(expr(gamma, f.1, mod, defs, state))
+          return(#(f.0, t), state)
         },
       )
-      return(TStruct3(p, fields2), state2)
+      return(TStruct3(p, fields2), state)
     }
   }
 }
@@ -539,5 +570,102 @@ fn instantiate(solutions: Map(Id, Expr3), t: Expr3) -> Expr3 {
     Downcast3(p, e, t1, t2) -> Downcast3(p, i(e), i(t1), i(t2))
     Upcast3(p, e, t1, t2) -> Upcast3(p, i(e), i(t1), i(t2))
     _ -> t
+  }
+}
+
+fn eval(e: Expr3, env: Map(Ident, Expr3), state: State) -> Monad(Expr3) {
+  case e {
+    Ident3(p, t, i) -> {
+      use t, state <- do(eval(t, env, state))
+      case get(env, i) {
+        Ok(e) -> return(e, state)
+        Error(Nil) -> return(Ident3(p, t, i), state)
+      }
+    }
+    Int3(_, _) -> return(e, state)
+    Builtin3(_, t, _) ->
+      do(eval(t, env, state), fn(_, state) { return(e, state) })
+    Func3(p, t, imp_args, args, body) -> {
+      use t, state <- do(eval(t, env, state))
+      use args, state <- monadic_map(
+        args,
+        state,
+        fn(a, state) {
+          let #(argid, argt) = a
+          use t, state <- do(eval(argt, env, state))
+          return(#(argid, t), state)
+        },
+      )
+      return(Func3(p, t, imp_args, args, body), state)
+    }
+    App3(_, t, func, args) -> {
+      use _, state <- do(eval(t, env, state))
+      use func, state <- do(eval(func, env, state))
+      use args, state <- monadic_map(
+        args,
+        state,
+        fn(a, state) { eval(a, env, state) },
+      )
+      case func {
+        Func3(_, _, _, formal_args, body) -> {
+          let substitutions =
+            list.fold(
+              list.zip(formal_args, args),
+              map.new(),
+              fn(subs, a) {
+                let #(#(argid, _), actual) = a
+                insert(subs, argid, actual)
+              },
+            )
+          return(instantiate(substitutions, body), state)
+        }
+        Builtin3(_, _, "print") -> {
+          let assert [Int3(p, arg)] = args
+          monad.log(arg)
+          return(Int3(p, arg), state)
+        }
+        _ -> panic("application of non-function")
+      }
+    }
+    TPi3(p, imp_args, args, body) -> {
+      use args, state <- monadic_map(
+        args,
+        state,
+        fn(a, state) {
+          let #(argid, argt) = a
+          use t, state <- do(eval(argt, env, state))
+          return(#(argid, t), state)
+        },
+      )
+      return(TPi3(p, imp_args, args, body), state)
+    }
+    Downcast3(p, e, from, to) -> {
+      use e, state <- do(eval(e, env, state))
+      use from, state <- do(eval(from, env, state))
+      use to, state <- do(eval(to, env, state))
+      return(Downcast3(p, e, from, to), state)
+    }
+    Upcast3(p, e, from, to) -> {
+      use e, state <- do(eval(e, env, state))
+      use from, state <- do(eval(from, env, state))
+      use to, state <- do(eval(to, env, state))
+      return(Upcast3(p, e, from, to), state)
+    }
+    TType3(p) -> return(TType3(p), state)
+    TKind3(p) -> return(TKind3(p), state)
+    TDynamic3(p) -> return(TDynamic3(p), state)
+    TStruct3(p, fields) -> {
+      use fields, state <- monadic_map(
+        fields,
+        state,
+        fn(field, state) {
+          let #(name, t) = field
+          use t, state <- do(eval(t, env, state))
+          return(#(name, t), state)
+        },
+      )
+      return(TStruct3(p, fields), state)
+    }
+    _ -> panic("todo")
   }
 }

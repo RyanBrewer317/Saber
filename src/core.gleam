@@ -79,6 +79,7 @@ pub type Error {
   SortMismatch(Position, Expr3, Expr3)
   CallingWrongArity(Position, Expr3, Int)
   TypeAtRuntime(Expr3)
+  ExtendedError(Error, String)
 }
 
 pub fn pretty_err(e: Error) -> String {
@@ -111,6 +112,7 @@ pub fn pretty_err(e: Error) -> String {
       ) <> " args at " <> string.inspect(pos)
     TypeAtRuntime(t) ->
       "Runtime error! Found a type at runtime, " <> pretty_expr3(t)
+    ExtendedError(e, s) -> "When " <> s <> ", " <> pretty_err(e)
   }
 }
 
@@ -177,7 +179,6 @@ pub type Expr2 {
     body: Expr2,
   )
   TType2(pos: Position)
-  TLabelType2(pos: Position)
   TDynamic2(pos: Position)
   Struct2(pos: Position, fields: List(#(String, Expr2)))
   TStruct2(pos: Position, fields: List(#(String, Expr2)))
@@ -212,11 +213,14 @@ pub type Expr3 {
   )
   TType3(pos: Position)
   TKind3(pos: Position)
-  TLabelType3(pos: Position)
-  TLabelKind3(pos: Position)
   TDynamic3(pos: Position)
   Struct3(pos: Position, t: Expr3, fields: List(#(String, Expr3)))
   TStruct3(pos: Position, fields: List(#(String, Expr3)))
+}
+
+pub fn mod_name_from_path(path: String) -> String {
+  let assert Ok(name) = list.last(string.split(path, "/"))
+  name
 }
 
 pub fn pretty_expr3(e: Expr3) -> String {
@@ -225,7 +229,7 @@ pub fn pretty_expr3(e: Expr3) -> String {
     Ident3(_, _, Local(id)) -> "x" <> to_string(id)
     Ident3(_, _, Global(name)) -> name
     Builtin3(_, _, name) -> name
-    ModuleAccess3(_, _, mod, field) -> mod <> "." <> field
+    ModuleAccess3(_, _, path, field) -> mod_name_from_path(path) <> "." <> field
     StructAccess3(_, _, e, field) -> pretty_expr3(e) <> "." <> field
     Func3(_, _, [], args, body) ->
       "fn(" <> {
@@ -234,11 +238,11 @@ pub fn pretty_expr3(e: Expr3) -> String {
         |> string.join(", ")
       } <> ") " <> pretty_expr3(body)
     Func3(_, _, imp_args, args, body) ->
-      "fn<" <> {
+      "fn[" <> {
         imp_args
         |> list.map(fn(a) { "x" <> to_string(a) })
         |> string.join(", ")
-      } <> ">(" <> {
+      } <> "](" <> {
         args
         |> list.map(fn(a) { "x" <> to_string(a.0) <> ": " <> pretty_expr3(a.1) })
         |> string.join(", ")
@@ -282,11 +286,11 @@ pub fn pretty_expr3(e: Expr3) -> String {
         )
       {
         True ->
-          "Pi<" <> {
+          "Pi[" <> {
             imp_args
             |> list.map(fn(a) { "x" <> to_string(a) })
             |> string.join(", ")
-          } <> ">(" <> {
+          } <> "](" <> {
             args
             |> list.map(fn(a) {
               "x" <> to_string(a.0) <> ": " <> pretty_expr3(a.1)
@@ -294,11 +298,11 @@ pub fn pretty_expr3(e: Expr3) -> String {
             |> string.join(", ")
           } <> ") " <> pretty_expr3(body)
         False ->
-          "<" <> {
+          "[" <> {
             imp_args
             |> list.map(fn(a) { "x" <> to_string(a) })
             |> string.join(", ")
-          } <> ">(" <> {
+          } <> "](" <> {
             args
             |> list.map(fn(a) {
               "x" <> to_string(a.0) <> ": " <> pretty_expr3(a.1)
@@ -307,8 +311,6 @@ pub fn pretty_expr3(e: Expr3) -> String {
           } <> ")->" <> pretty_expr3(body)
       }
     TType3(_) -> "type"
-    TLabelType3(_) -> "labeltype"
-    TLabelKind3(_) -> "labelkind"
     TKind3(_) -> "kind"
     TDynamic3(_) -> "dyn"
     Struct3(_, _, fields) ->
@@ -382,8 +384,6 @@ pub fn substitute(id: Id, new: Expr3, t: Expr3) -> Expr3 {
       }
     TDynamic3(_) -> t
     TType3(_) -> t
-    TLabelType3(_) -> t
-    TLabelKind3(_) -> t
     TKind3(_) -> t
     Struct3(pos, t, fields) ->
       Struct3(pos, sub(t), list.map(fields, fn(f) { #(f.0, sub(f.1)) }))
@@ -434,8 +434,6 @@ fn swap_ident(id: Id, new: Id, t: Expr3) -> Expr3 {
       }
     TDynamic3(_) -> t
     TType3(_) -> t
-    TLabelType3(_) -> t
-    TLabelKind3(_) -> t
     TKind3(_) -> t
     Struct3(pos, t, fields) ->
       Struct3(pos, sub(t), list.map(fields, fn(f) { #(f.0, sub(f.1)) }))
@@ -475,8 +473,6 @@ pub fn type_eq(t1: Expr3, t2: Expr3) -> Bool {
       )
     TDynamic3(_), TDynamic3(_) -> True
     TType3(_), TType3(_) -> True
-    TLabelType3(_), TLabelType3(_) -> True
-    TLabelKind3(_), TLabelKind3(_) -> True
     _, _ -> False
   }
 }
@@ -488,10 +484,25 @@ pub type Stmt3 {
 
 pub fn pretty_stmt3(s: Stmt3) -> String {
   case s {
-    Def3(_, name, val) ->
-      "def x" <> name <> ": " <> pretty_expr3(typeof(val)) <> " = " <> pretty_expr3(
-        val,
-      )
+    Def3(_, name, Func3(_, TPi3(_, _, _, rett), [], args, body)) ->
+      "fn " <> name <> "(" <> string.join(
+        list.map(
+          args,
+          fn(a) { "x" <> to_string(a.0) <> ": " <> pretty_expr3(a.1) },
+        ),
+        ", ",
+      ) <> ") -> " <> pretty_expr3(rett) <> " {\n  " <> pretty_expr3(body) <> "\n}"
+    Def3(_, name, Func3(_, TPi3(_, _, _, rett), imp_args, args, body)) ->
+      "fn " <> name <> "[" <> string.join(
+        list.map(imp_args, fn(a) { "x" <> to_string(a) }),
+        ",",
+      ) <> "](" <> string.join(
+        list.map(
+          args,
+          fn(a) { "x" <> to_string(a.0) <> ": " <> pretty_expr3(a.1) },
+        ),
+        ", ",
+      ) <> ") -> " <> pretty_expr3(rett) <> " {\n  " <> pretty_expr3(body) <> "\n}"
     Import3(_, name) -> "import " <> name
   }
 }
@@ -511,8 +522,6 @@ pub fn typeof(e: Expr3) -> Expr3 {
     TDynamic3(pos) -> TType3(pos)
     TType3(pos) -> TKind3(pos)
     TKind3(_) -> panic("kind is untypeable")
-    TLabelType3(pos) -> TLabelKind3(pos)
-    TLabelKind3(_) -> panic("labelkind is untypeable")
     Struct3(_, t, _) -> t
     TStruct3(pos, _) -> TType3(pos)
   }
@@ -531,8 +540,6 @@ pub type Expr4 {
   TPi4(pos: Position, args: List(#(Id, Expr4)), body: Expr4)
   TType4(pos: Position)
   TKind4(pos: Position)
-  TLabelType4(pos: Position)
-  TLabelKind4(pos: Position)
   TDynamic4(pos: Position)
   Struct4(pos: Position, t: Expr4, fields: List(#(String, Expr4)))
   TStruct4(pos: Position, fields: List(#(String, Expr4)))
@@ -549,7 +556,7 @@ pub fn pretty_expr(e: Expr4) -> String {
     Ident4(_, _, Local(id)) -> "x" <> to_string(id)
     Ident4(_, _, Global(name)) -> name
     Builtin4(_, _, name) -> name
-    ModuleAccess4(_, _, module, field) -> module <> "." <> field
+    ModuleAccess4(_, _, path, field) -> mod_name_from_path(path) <> "." <> field
     StructAccess4(_, _, e, field) -> pretty_expr(e) <> "." <> field
     Func4(_, _, args, body) ->
       "fn(" <> {
@@ -589,8 +596,6 @@ pub fn pretty_expr(e: Expr4) -> String {
           } <> ")->" <> pretty_expr(body)
       }
     TType4(_) -> "type"
-    TLabelType4(_) -> "labeltype"
-    TLabelKind4(_) -> "labelkind"
     TKind4(_) -> "kind"
     TDynamic4(_) -> "dyn"
     Struct4(_, _, fields) ->
@@ -621,7 +626,14 @@ pub fn contains(e: Expr4, id: Id) -> Bool {
 
 pub fn pretty_stmt(s: Stmt4) -> String {
   case s {
-    Def4(_, name, val) -> "def " <> name <> " = " <> pretty_expr(val)
+    Def4(_, name, Func4(_, TPi4(_, _, rett), args, body)) ->
+      "fn " <> name <> "(" <> string.join(
+        list.map(
+          args,
+          fn(a) { "x" <> to_string(a.0) <> ": " <> pretty_expr(a.1) },
+        ),
+        ", ",
+      ) <> ") -> " <> pretty_expr(rett) <> " {\n  " <> pretty_expr(body) <> "\n}"
     Import4(_, name) -> "import " <> name
   }
 }

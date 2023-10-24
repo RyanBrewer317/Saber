@@ -16,25 +16,25 @@ import monad.{Monad, State, monadic_map}
 import simplifile
 
 pub fn parse_lib(lib: Library0, state: State) -> Monad(Library1) {
-  use entry, state2 <- monad.do(parse_module(lib.entry, state))
-  monad.return(Library1(lib.path, entry), state2)
+  use entry, state <- monad.do(parse_module(lib.entry, state))
+  monad.return(Library1(lib.path, entry), state)
 }
 
 fn parse_module(mod: Module0, state: State) -> Monad(Module1) {
-  use parses, state2 <- monadic_map(
+  use parses, state <- monadic_map(
     mod.files,
     state,
     fn(filename, state) {
-      use code, state2 <- monad.try(
+      use code, state <- monad.try(
         simplifile.read(mod.path <> "/" <> filename)
         |> result.replace_error(CouldntOpenFile(filename)),
         state,
       )
-      parse(mod.path <> "/" <> filename, code, state2)
+      parse(mod.path <> "/" <> filename, code, state)
     },
   )
 
-  use subs, state3 <- monadic_map(mod.subs, state2, parse_module)
+  use subs, state <- monadic_map(mod.subs, state, parse_module)
   let #(ast, symbol_table) =
     list.fold(
       parses,
@@ -43,7 +43,7 @@ fn parse_module(mod: Module0, state: State) -> Monad(Module1) {
     )
   monad.return(
     Module1(mod.path, subs, symbol_table, mod.files, list.reverse(ast)),
-    state3,
+    state,
   )
 }
 
