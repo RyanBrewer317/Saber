@@ -32,9 +32,21 @@ fn test9(t: type, x: t) -> t {
   x
 }
 
+fn zero[t](base: t) -> (t->t)->t {
+  fn(step: t->t) base
+}
+
+fn succ[t](n: t->(t->t)->t) -> t->(t->t)->t {
+  fn(base: t) fn(step: t->t) step(n(base)(step))
+}
+
 // dependent types work at the moment, as I haven't banned the (*,square) rule in the PTS yet
 fn test10(x: int) -> type {
   int // there isn't really a way to make use of DT without ADTs, so this is a constant function
+}
+
+fn test11() -> inter{x: int->int, y: int} {
+  7
 }
 
 fn main() {

@@ -2,8 +2,8 @@ import core.{
   App1, App2, Builtin1, Builtin2, Def1, Def2, DotAccess1, Expr1, Expr2, Func1,
   Func2, Global, Id, Ident1, Ident2, Import1, Import2, Int1, Int2, Library1,
   Library2, Local, Module1, Module2, ModuleAccess2, Stmt1, Stmt2, Struct1,
-  Struct2, StructAccess2, TDynamic1, TDynamic2, TPi1, TPi2, TStruct1, TStruct2,
-  TType2, Undefined,
+  Struct2, StructAccess2, TDynamic1, TDynamic2, TInter1, TInter2, TPi1, TPi2,
+  TStruct1, TStruct2, TType2, Undefined,
 }
 import monad.{
   Monad, State, do, fail, fresh, label, monadic_fold, monadic_map, return,
@@ -62,9 +62,10 @@ fn stmt(
   state: State,
 ) -> Monad(#(Stmt2, Renames)) {
   case s {
-    Def1(p, name, body) -> {
-      use body2, state <- do(expr(body, renames, mod, state))
-      return(#(Def2(p, name, body2), renames), state)
+    Def1(p, name, t, body) -> {
+      use body, state <- do(expr(body, renames, mod, state))
+      use t, state <- do(expr(t, renames, mod, state))
+      return(#(Def2(p, name, t, body), renames), state)
     }
     Import1(p, name) -> return(#(Import2(p, name), renames), state)
   }
@@ -87,15 +88,15 @@ fn expr(e: Expr1, renames: Renames, mod: Module1, state: State) -> Monad(Expr2) 
           }
       }
     Builtin1(p, name) -> return(Builtin2(p, name), state)
-    DotAccess1(p, e2, field) -> {
+    DotAccess1(p, e, field) -> {
       let not_module = fn(state) {
-        use e22, state <- do(expr(e2, renames, mod, state))
-        return(StructAccess2(p, e22, field), state)
+        use e, state <- do(expr(e, renames, mod, state))
+        return(StructAccess2(p, e, field), state)
       }
       let is_mod = fn(name) {
         list.find(mod.subs, fn(sub) { sub.path == mod.path <> "/" <> name })
       }
-      case e2 {
+      case e {
         Ident1(_, _, name) -> {
           case is_mod(name) {
             Ok(sub) ->
@@ -111,13 +112,13 @@ fn expr(e: Expr1, renames: Renames, mod: Module1, state: State) -> Monad(Expr2) 
     }
     Func1(p, imp_args, args, body) -> {
       use state <- label("in func", state)
-      use imp_args2, state <- monadic_map(
+      use imp_args, state <- monadic_map(
         imp_args,
         state,
         fn(a, state) { fresh(state, fn(i, state) { return(#(a, i), state) }) },
       )
-      let renames = list.append(imp_args2, renames)
-      use #(args2_rev, renames), state <- monadic_fold(
+      let renames = list.append(imp_args, renames)
+      use #(args_rev, renames), state <- monadic_fold(
         args,
         #([], renames),
         state,
@@ -135,31 +136,31 @@ fn expr(e: Expr1, renames: Renames, mod: Module1, state: State) -> Monad(Expr2) 
           )
         },
       )
-      let args2 = list.reverse(args2_rev)
+      let args = list.reverse(args_rev)
       let renames =
-        list.append(list.map(args2, fn(a) { #(a.0, { a.1 }.0) }), renames)
-      use body2, state <- do(expr(body, renames, mod, state))
+        list.append(list.map(args, fn(a) { #(a.0, { a.1 }.0) }), renames)
+      use body, state <- do(expr(body, renames, mod, state))
       return(
         Func2(
           p,
-          list.map(imp_args2, fn(a) { a.1 }),
-          list.map(args2, fn(a) { a.1 }),
-          body2,
+          list.map(imp_args, fn(a) { a.1 }),
+          list.map(args, fn(a) { a.1 }),
+          body,
         ),
         state,
       )
     }
     App1(p, func, args) -> {
-      use func2, state <- do(expr(func, renames, mod, state))
-      use args2, state <- monadic_map(
+      use func, state <- do(expr(func, renames, mod, state))
+      use args, state <- monadic_map(
         args,
         state,
         fn(a, state) { expr(a, renames, mod, state) },
       )
-      return(App2(p, func2, args2), state)
+      return(App2(p, func, args), state)
     }
     TPi1(p, imp_args, args, body) -> {
-      use imp_args2, state <- monadic_map(
+      use imp_args, state <- monadic_map(
         imp_args,
         state,
         fn(a, state) {
@@ -167,8 +168,8 @@ fn expr(e: Expr1, renames: Renames, mod: Module1, state: State) -> Monad(Expr2) 
           return(#(a, i), state)
         },
       )
-      let renames = list.append(imp_args2, renames)
-      use #(args2_rev, renames), state <- monadic_fold(
+      let renames = list.append(imp_args, renames)
+      use #(args_rev, renames), state <- monadic_fold(
         args,
         #([], renames),
         state,
@@ -186,23 +187,23 @@ fn expr(e: Expr1, renames: Renames, mod: Module1, state: State) -> Monad(Expr2) 
           )
         },
       )
-      let args2 = list.reverse(args2_rev)
+      let args = list.reverse(args_rev)
       let renames =
-        list.append(list.map(args2, fn(a) { #(a.0, { a.1 }.0) }), renames)
-      use body2, state <- do(expr(body, renames, mod, state))
+        list.append(list.map(args, fn(a) { #(a.0, { a.1 }.0) }), renames)
+      use body, state <- do(expr(body, renames, mod, state))
       return(
         TPi2(
           p,
-          list.map(imp_args2, fn(a) { a.1 }),
-          list.map(args2, fn(a) { a.1 }),
-          body2,
+          list.map(imp_args, fn(a) { a.1 }),
+          list.map(args, fn(a) { a.1 }),
+          body,
         ),
         state,
       )
     }
     TDynamic1(p) -> return(TDynamic2(p), state)
     Struct1(p, fields) -> {
-      use fields2, state <- monadic_map(
+      use fields, state <- monadic_map(
         fields,
         state,
         fn(f, state) {
@@ -210,10 +211,10 @@ fn expr(e: Expr1, renames: Renames, mod: Module1, state: State) -> Monad(Expr2) 
           return(#(f.0, val), state)
         },
       )
-      return(Struct2(p, fields2), state)
+      return(Struct2(p, fields), state)
     }
     TStruct1(p, fields) -> {
-      use fields2, state <- monadic_map(
+      use fields, state <- monadic_map(
         fields,
         state,
         fn(f, state) {
@@ -221,7 +222,26 @@ fn expr(e: Expr1, renames: Renames, mod: Module1, state: State) -> Monad(Expr2) 
           return(#(f.0, t), state)
         },
       )
-      return(TStruct2(p, fields2), state)
+      return(TStruct2(p, fields), state)
+    }
+    TInter1(p, ts) -> {
+      use #(ts_rev, _), state <- monadic_fold(
+        ts,
+        #([], renames),
+        state,
+        fn(s, t, state) {
+          let #(so_far, renames) = s
+          let #(name, ty) = t
+          use ty, state <- do(expr(ty, renames, mod, state))
+          use new_name, state <- fresh(state)
+          return(
+            #([#(new_name, ty), ..so_far], [#(name, new_name), ..renames]),
+            state,
+          )
+        },
+      )
+      let ts = list.reverse(ts_rev)
+      return(TInter2(p, ts), state)
     }
   }
 }

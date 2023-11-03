@@ -1,7 +1,9 @@
 import gleam/int.{to_string}
 import gleam/string
 import gleam/list
+import gleam/bool.{guard}
 import gleam/map.{Map}
+import gleam/io
 import party.{ParseError, Position}
 
 pub type Library0 {
@@ -149,10 +151,11 @@ pub type Expr1 {
   TDynamic1(pos: Position)
   Struct1(pos: Position, fields: List(#(String, Expr1)))
   TStruct1(pos: Position, fields: List(#(String, Expr1)))
+  TInter1(pos: Position, args: List(#(String, Expr1)))
 }
 
 pub type Stmt1 {
-  Def1(pos: Position, name: String, val: Expr1)
+  Def1(pos: Position, name: String, t: Expr1, val: Expr1)
   Import1(pos: Position, name: String)
 }
 
@@ -182,10 +185,11 @@ pub type Expr2 {
   TDynamic2(pos: Position)
   Struct2(pos: Position, fields: List(#(String, Expr2)))
   TStruct2(pos: Position, fields: List(#(String, Expr2)))
+  TInter2(pos: Position, args: List(#(Id, Expr2)))
 }
 
 pub type Stmt2 {
-  Def2(pos: Position, name: String, val: Expr2)
+  Def2(pos: Position, name: String, t: Expr2, val: Expr2)
   Import2(pos: Position, name: String)
 }
 
@@ -216,6 +220,7 @@ pub type Expr3 {
   TDynamic3(pos: Position)
   Struct3(pos: Position, t: Expr3, fields: List(#(String, Expr3)))
   TStruct3(pos: Position, fields: List(#(String, Expr3)))
+  TInter3(pos: Position, args: List(#(Id, Expr3)))
 }
 
 pub fn mod_name_from_path(path: String) -> String {
@@ -325,6 +330,12 @@ pub fn pretty_expr3(e: Expr3) -> String {
         |> list.map(fn(f) { f.0 <> ": " <> pretty_expr3(f.1) })
         |> string.join(", ")
       } <> "}"
+    TInter3(_, ts) ->
+      "inter{" <> {
+        ts
+        |> list.map(fn(t) { "x" <> to_string(t.0) <> ": " <> pretty_expr3(t.1) })
+        |> string.join(", ")
+      } <> "}"
   }
 }
 
@@ -340,6 +351,10 @@ pub fn contains3(e: Expr3, id: Id) -> Bool {
     App3(_, t, func, args) -> c(t) || c(func) || list.any(args, c)
     Downcast3(_, e2, t1, t2) | Upcast3(_, e2, t1, t2) -> c(e2) || c(t1) || c(t2)
     TPi3(_, _, args, body) -> list.any(args, fn(a) { c(a.1) }) || c(body)
+    Struct3(_, t, fields) -> c(t) || list.any(fields, fn(f) { c(f.1) })
+    StructAccess3(_, t, e, _) -> c(t) || c(e)
+    TStruct3(_, fields) -> list.any(fields, fn(f) { c(f.1) })
+    TInter3(_, ts) -> list.any(ts, fn(t) { c(t.1) })
     _ -> False
   }
 }
@@ -389,10 +404,11 @@ pub fn substitute(id: Id, new: Expr3, t: Expr3) -> Expr3 {
       Struct3(pos, sub(t), list.map(fields, fn(f) { #(f.0, sub(f.1)) }))
     TStruct3(pos, fields) ->
       TStruct3(pos, list.map(fields, fn(f) { #(f.0, sub(f.1)) }))
+    TInter3(pos, ts) -> TInter3(pos, list.map(ts, fn(t) { #(t.0, sub(t.1)) }))
   }
 }
 
-fn swap_ident(id: Id, new: Id, t: Expr3) -> Expr3 {
+fn swap_ident(from id: Id, to new: Id, in t: Expr3) -> Expr3 {
   let sub = swap_ident(id, new, _)
   case t {
     Int3(_, _) -> t
@@ -439,6 +455,7 @@ fn swap_ident(id: Id, new: Id, t: Expr3) -> Expr3 {
       Struct3(pos, sub(t), list.map(fields, fn(f) { #(f.0, sub(f.1)) }))
     TStruct3(pos, fields) ->
       TStruct3(pos, list.map(fields, fn(f) { #(f.0, sub(f.1)) }))
+    TInter3(pos, ts) -> TInter3(pos, list.map(ts, fn(t) { #(t.0, sub(t.1)) }))
   }
 }
 
@@ -448,24 +465,70 @@ pub fn type_eq(t1: Expr3, t2: Expr3) -> Bool {
     Builtin3(_, _, name1), Builtin3(_, _, name2) if name1 == name2 -> True
     ModuleAccess3(_, _, name1, field1), ModuleAccess3(_, _, name2, field2) ->
       name1 == name2 && field1 == field2
-    TPi3(_, imp_args1, args1, body1), TPi3(_, imp_args2, args2, body2) ->
-      list.length(imp_args1) == list.length(imp_args2) && list.length(args1) == list.length(
-        args2,
-      ) && list.all(
-        list.zip(args1, args2),
-        fn(p) { type_eq({ p.0 }.1, { p.1 }.1) },
-      ) && type_eq(
+    TPi3(_, imp_args1, args1, body1), TPi3(_, imp_args2, args2, body2) -> {
+      use <- guard(
+        when: list.length(imp_args1) != list.length(imp_args2),
+        return: False,
+      )
+      use <- guard(
+        when: list.length(args1) != list.length(args2),
+        return: False,
+      )
+      let imp_args1_in_args2 = 
         list.fold(
+          list.zip(imp_args1, imp_args2),
+          args2,
+          fn(args, a) {
+            let #(name1, swapee) = a
+            list.map(
+              args,
+              fn(a2) {
+                let #(name2, ty2) = a2
+                let name = case name2 == swapee {
+                  True -> name1
+                  False -> name2
+                }
+                #(name, swap_ident(from: swapee, to: name1, in: ty2))
+              },
+            )
+          },
+        )
+      let swapped =
+        list.fold(
+          list.zip(args1, args2),
+          imp_args1_in_args2,
+          fn(args, a) {
+            let #(#(name1, _), #(swapee, _)) = a
+            list.map(
+              args,
+              fn(a2) {
+                let #(name2, ty2) = a2
+                let name = case name2 == swapee {
+                  True -> name1
+                  False -> name2
+                }
+                #(name, swap_ident(from: swapee, to: name1, in: ty2))
+              },
+            )
+          },
+        )
+      swapped == args1 && type_eq(
+        io.debug(list.fold(
           list.zip(args2, args1),
           list.fold(
             list.zip(imp_args2, imp_args1),
             body2,
-            fn(a, b) { swap_ident(b.0, b.1, a) },
+            fn(bdy2, a) { 
+              let #(iarg2, iarg1) = a
+              swap_ident(from: iarg2, to: iarg1, in: bdy2) },
           ),
-          fn(a, b) { swap_ident({ b.0 }.0, { b.1 }.0, a) },
-        ),
-        body1,
+          fn(bdy2, a) { 
+            let #(arg2, arg1) = a
+            swap_ident(from: arg2.0, to: arg1.0, in: bdy2) },
+        )),
+        io.debug(body1),
       )
+    }
     App3(_, _, func1, args1), App3(_, _, func2, args2) ->
       type_eq(func1, func2) && list.all(
         list.zip(args1, args2),
@@ -473,18 +536,34 @@ pub fn type_eq(t1: Expr3, t2: Expr3) -> Bool {
       )
     TDynamic3(_), TDynamic3(_) -> True
     TType3(_), TType3(_) -> True
+    TStruct3(_, fields1), TStruct3(_, fields2) ->
+      list.all(
+        list.zip(fields1, fields2),
+        fn(pair) {
+          let #(#(n1, t1), #(n2, t2)) = pair
+          n1 == n2 && type_eq(t1, t2)
+        },
+      )
+    TInter3(_, ts1), TInter3(_, ts2) ->
+      list.all(
+        list.zip(ts1, ts2),
+        fn(pair) {
+          let #(#(_, t1), #(_, t2)) = pair
+          type_eq(t1, t2)
+        },
+      )
     _, _ -> False
   }
 }
 
 pub type Stmt3 {
-  Def3(pos: Position, id: String, val: Expr3)
+  Def3(pos: Position, id: String, t: Expr3, val: Expr3)
   Import3(pos: Position, name: String)
 }
 
 pub fn pretty_stmt3(s: Stmt3) -> String {
   case s {
-    Def3(_, name, Func3(_, TPi3(_, _, _, rett), [], args, body)) ->
+    Def3(_, name, _, Func3(_, TPi3(_, _, _, rett), [], args, body)) ->
       "fn " <> name <> "(" <> string.join(
         list.map(
           args,
@@ -492,7 +571,7 @@ pub fn pretty_stmt3(s: Stmt3) -> String {
         ),
         ", ",
       ) <> ") -> " <> pretty_expr3(rett) <> " {\n  " <> pretty_expr3(body) <> "\n}"
-    Def3(_, name, Func3(_, TPi3(_, _, _, rett), imp_args, args, body)) ->
+    Def3(_, name, _, Func3(_, TPi3(_, _, _, rett), imp_args, args, body)) ->
       "fn " <> name <> "[" <> string.join(
         list.map(imp_args, fn(a) { "x" <> to_string(a) }),
         ",",
@@ -524,6 +603,7 @@ pub fn typeof(e: Expr3) -> Expr3 {
     TKind3(_) -> panic("kind is untypeable")
     Struct3(_, t, _) -> t
     TStruct3(pos, _) -> TType3(pos)
+    TInter3(pos, _) -> TType3(pos)
   }
 }
 
@@ -543,10 +623,11 @@ pub type Expr4 {
   TDynamic4(pos: Position)
   Struct4(pos: Position, t: Expr4, fields: List(#(String, Expr4)))
   TStruct4(pos: Position, fields: List(#(String, Expr4)))
+  TInter4(pos: Position, ts: List(#(Id, Expr4)))
 }
 
 pub type Stmt4 {
-  Def4(pos: Position, id: String, val: Expr4)
+  Def4(pos: Position, id: String, t: Expr4, val: Expr4)
   Import4(pos: Position, name: String)
 }
 
@@ -608,6 +689,14 @@ pub fn pretty_expr(e: Expr4) -> String {
         list.map(fields, fn(f) { f.0 <> ": " <> pretty_expr(f.1) }),
         ", ",
       ) <> "}"
+    TInter4(_, ts) ->
+      "Inter{" <> string.join(
+        list.map(
+          ts,
+          fn(t) { "x" <> to_string(t.0) <> ": " <> pretty_expr(t.1) },
+        ),
+        ", ",
+      ) <> "}"
   }
 }
 
@@ -615,18 +704,25 @@ pub fn contains(e: Expr4, id: Id) -> Bool {
   let c = contains(_, id)
   case e {
     Ident4(_, _, Local(x)) if x == id -> True
+    Ident4(_, t, _) -> c(t)
     Func4(_, t, args, body) ->
       c(t) || list.any(args, fn(a) { c(a.1) }) || c(body)
     App4(_, t, func, args) -> c(t) || c(func) || list.any(args, c)
     Downcast4(_, e2, t1, t2) | Upcast4(_, e2, t1, t2) -> c(e2) || c(t1) || c(t2)
     TPi4(_, args, body) -> list.any(args, fn(a) { c(a.1) }) || c(body)
+    Builtin4(_, t, _) -> c(t)
+    ModuleAccess4(_, t, _, _) -> c(t)
+    Struct4(_, t, fields) -> c(t) || list.any(fields, fn(f) { c(f.1) })
+    StructAccess4(_, t, e, _) -> c(t) || c(e)
+    TStruct4(_, fields) -> list.any(fields, fn(f) { c(f.1) })
+    TInter4(_, ts) -> list.any(ts, fn(t) { c(t.1) })
     _ -> False
   }
 }
 
 pub fn pretty_stmt(s: Stmt4) -> String {
   case s {
-    Def4(_, name, Func4(_, TPi4(_, _, rett), args, body)) ->
+    Def4(_, name, _, Func4(_, TPi4(_, _, rett), args, body)) ->
       "fn " <> name <> "(" <> string.join(
         list.map(
           args,

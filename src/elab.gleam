@@ -2,8 +2,8 @@ import core.{
   App3, App4, Builtin3, Builtin4, Def3, Def4, Downcast3, Downcast4, Expr3, Expr4,
   Func3, Func4, Ident3, Ident4, Import3, Import4, Int3, Int4, Library3, Library4,
   Module3, Module4, ModuleAccess3, ModuleAccess4, Stmt3, Stmt4, Struct3, Struct4,
-  StructAccess3, StructAccess4, TDynamic3, TDynamic4, TKind3, TKind4, TPi3, TPi4,
-  TStruct3, TStruct4, TType3, TType4, Upcast3, Upcast4,
+  StructAccess3, StructAccess4, TDynamic3, TDynamic4, TInter3, TInter4, TKind3,
+  TKind4, TPi3, TPi4, TStruct3, TStruct4, TType3, TType4, Upcast3, Upcast4,
 }
 import monad.{Monad, State, do, monadic_fold, monadic_map, return}
 import gleam/list
@@ -37,9 +37,10 @@ fn iteratee(
 
 pub fn stmt(s: Stmt3, state: State) -> Monad(Stmt4) {
   case s {
-    Def3(p, id, e) -> {
-      use e2, state <- do(expr(e, state))
-      return(Def4(p, id, e2), state)
+    Def3(p, id, t, e) -> {
+      use e, state <- do(expr(e, state))
+      use t, state <- do(expr(t, state))
+      return(Def4(p, id, t, e), state)
     }
     Import3(p, name) -> return(Import4(p, name), state)
   }
@@ -137,6 +138,18 @@ fn expr(e: Expr3, state: State) -> Monad(Expr4) {
         },
       )
       return(TStruct4(p, fields2), state)
+    }
+    TInter3(p, ts) -> {
+      use ts, state <- monadic_map(
+        ts,
+        state,
+        fn(t, state) {
+          let #(name, ty) = t
+          use ty, state <- do(expr(ty, state))
+          return(#(name, ty), state)
+        },
+      )
+      return(TInter4(p, ts), state)
     }
   }
 }

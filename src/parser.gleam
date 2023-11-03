@@ -1,7 +1,7 @@
 import core.{
   App1, Builtin1, CouldntOpenFile, Def1, DotAccess1, Error, Expr1, Func1, Ident1,
   Import1, Int1, Library0, Library1, Module0, Module1, ParseError, Stmt1,
-  Struct1, TDynamic1, TPi1, TStruct1,
+  Struct1, TDynamic1, TPi1, TStruct1, TInter1
 }
 import gleam/string
 import gleam/int
@@ -189,6 +189,25 @@ fn struct(path: String) -> Parser(Expr1, Nil) {
   return(Struct1(pos, fields))
 }
 
+fn tinter(path: String) -> Parser(Expr1, Nil) {
+  use pos <- do(pos())
+  use _ <- do(party.string("inter"))
+  use _ <- do(not(alt(alphanum(), char("_"))))
+  use _ <- do(ws())
+  use _ <- do(char("{"))
+  use fields <- do(comma_sep({
+    use _ <- do(ws())
+    use name <- do(identstring())
+    use _ <- do(ws())
+    use _ <- do(char(":"))
+    use t <- do(lazy(expr(path)))
+    use _ <- do(ws())
+    return(#(name, t))
+  }))
+  use _ <- do(char("}"))
+  return(TInter1(pos, fields))
+}
+
 fn tstruct(path: String) -> Parser(Expr1, Nil) {
   use pos <- do(pos())
   use _ <- do(party.string("struct"))
@@ -261,6 +280,7 @@ fn expr(path: String) -> fn() -> Parser(Expr1, Nil) {
     use lit <- do(choice([
       struct(path),
       tstruct(path),
+      tinter(path),
       tforall(path),
       intlit(),
       paren_expr(path),
@@ -328,7 +348,7 @@ fn fn_def(path: String) -> Parser(#(Stmt1, String, Expr1), Nil) {
   use body <- do(expr(path)())
   use _ <- do(char("}"))
   use _ <- do(lazy(ws))
-  return(#(Def1(pos, name, Func1(pos, implicit_args, args, body)), name, t))
+  return(#(Def1(pos, name, t, Func1(pos, implicit_args, args, body)), name, t))
 }
 
 fn stmt(path: String) -> Parser(#(Stmt1, String, Expr1), Nil) {
