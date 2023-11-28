@@ -1,10 +1,9 @@
 import core.{
   type Expr1, type Expr2, type Id, type Library1, type Library2, type Module1,
-  type Module2, type Stmt1, type Stmt2, App1, App2, Builtin1, Builtin2, Def1,
-  Def2, Func1, Func2, Global, Ident1, Ident2, Int1,
-  Int2, Library2, Local, Module2,
-  TInter1, TInter2, TPi1, TPi2, TType2,
-  Undefined, Arg2
+  type Module2, type Stmt1, type Stmt2, App1, App2, Arg2, Builtin1, Builtin2,
+  Def1, Def2, Func1, Func2, Global, Ident1, Ident2, Int1, Int2, Library2, Local,
+  Module2, Projection1, Projection2, TInter1, TInter2, TPi1, TPi2, TType2,
+  Undefined,
 }
 import monad.{
   type Monad, type State, do, fail, fresh, label, monadic_fold, monadic_map,
@@ -88,29 +87,34 @@ fn expr(e: Expr1, renames: Renames, mod: Module1, state: State) -> Monad(Expr2) 
           }
       }
     Builtin1(p, name) -> return(Builtin2(p, name), state)
+    Projection1(p, e, idx) -> {
+      use e, state <- do(expr(e, renames, mod, state))
+      return(Projection2(p, e, idx), state)
+    }
+
     // DotAccess1(p, e, field) -> {
-      // use e, state <- do(expr(e, renames, mod, state))
-      // return(InterAccess2(p, e, field), state)
-      // let not_module = fn(state) {
-      //   use e, state <- do(expr(e, renames, mod, state))
-      //   return(StructAccess2(p, e, field), state)
-      // }
-      // let is_mod = fn(name) {
-      //   list.find(mod.subs, fn(sub) { sub.path == mod.path <> "/" <> name })
-      // }
-      // case e {
-      //   Ident1(_, _, name) -> {
-      //     case is_mod(name) {
-      //       Ok(sub) ->
-      //         case map.get(sub.symbol_table, field) {
-      //           Ok(_) -> return(ModuleAccess2(p, sub.path, field), state)
-      //           Error(Nil) -> fail(Undefined(mod.path, p, name <> "." <> field))
-      //         }
-      //       Error(Nil) -> not_module(state)
-      //     }
-      //   }
-      //   _ -> not_module(state)
-      // }
+    // use e, state <- do(expr(e, renames, mod, state))
+    // return(InterAccess2(p, e, field), state)
+    // let not_module = fn(state) {
+    //   use e, state <- do(expr(e, renames, mod, state))
+    //   return(StructAccess2(p, e, field), state)
+    // }
+    // let is_mod = fn(name) {
+    //   list.find(mod.subs, fn(sub) { sub.path == mod.path <> "/" <> name })
+    // }
+    // case e {
+    //   Ident1(_, _, name) -> {
+    //     case is_mod(name) {
+    //       Ok(sub) ->
+    //         case map.get(sub.symbol_table, field) {
+    //           Ok(_) -> return(ModuleAccess2(p, sub.path, field), state)
+    //           Error(Nil) -> fail(Undefined(mod.path, p, name <> "." <> field))
+    //         }
+    //       Error(Nil) -> not_module(state)
+    //     }
+    //   }
+    //   _ -> not_module(state)
+    // }
     // }
     Func1(p, args, body) -> {
       use state <- label("in func", state)
@@ -135,14 +139,7 @@ fn expr(e: Expr1, renames: Renames, mod: Module1, state: State) -> Monad(Expr2) 
       let renames =
         list.append(list.map(args, fn(a) { #(a.0, { a.1 }.id) }), renames)
       use body, state <- do(expr(body, renames, mod, state))
-      return(
-        Func2(
-          p,
-          list.map(args, fn(a) { a.1 }),
-          body,
-        ),
-        state,
-      )
+      return(Func2(p, list.map(args, fn(a) { a.1 }), body), state)
     }
     App1(p, func, args) -> {
       use func, state <- do(expr(func, renames, mod, state))
@@ -175,14 +172,7 @@ fn expr(e: Expr1, renames: Renames, mod: Module1, state: State) -> Monad(Expr2) 
       let renames =
         list.append(list.map(args, fn(a) { #(a.0, { a.1 }.id) }), renames)
       use body, state <- do(expr(body, renames, mod, state))
-      return(
-        TPi2(
-          p,
-          list.map(args, fn(a) { a.1 }),
-          body,
-        ),
-        state,
-      )
+      return(TPi2(p, list.map(args, fn(a) { a.1 }), body), state)
     }
     TInter1(p, ts) -> {
       use #(ts_rev, _), state <- monadic_fold(

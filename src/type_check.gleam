@@ -3,11 +3,12 @@ import monad.{
 }
 import core.{
   type Expr2, type Expr3, type Id, type Ident, type Library2, type Library3,
-  type Module2, type Module3, type Stmt2, type Stmt3, App2, App3, Builtin2,
-  Builtin3, CallingNonFunction, CallingWrongArity, Def2, Def3, Func2,
-  Func3, Global, Ident2, Ident3, Int2, Int3, Library3, Local,
-  Module3, TInter2, TInter3, TKind3, TPi2, TPi3, TType2, TType3, TypeError, UnknownInterField,
-  contains3, ident_to_str, substitute, alpha_eq, typeof, Arg2, Arg3, ArgMode
+  type Module2, type Module3, type Stmt2, type Stmt3, AccessingNonInter, App2,
+  App3, Arg2, Arg3, ArgMode, Builtin2, Builtin3, CallingNonFunction,
+  CallingWrongArity, Def2, Def3, Func2, Func3, Global, Ident2, Ident3, Int2,
+  Int3, Library3, Local, Module3, Projection2, Projection3, TInter2, TInter3,
+  TKind3, TPi2, TPi3, TType2, TType3, TypeError, UnknownInterField, alpha_eq,
+  contains3, ident_to_str, substitute, typeof,
 }
 import gleam/map.{type Map, get, insert}
 import gleam/result
@@ -79,8 +80,9 @@ fn expr(e: Expr2, c: Context) -> Monad(Expr3) {
     Func2(p, args, body) -> func(p, args, body, c)
     TPi2(p, args, body) -> pi(p, args, body, c)
     TInter2(p, ts) -> intersection(p, ts, c)
-    // InterAccess2(p, e, field) -> intersection_access(p, e, field, c)
+    Projection2(p, e, i) -> projection(p, e, i, c)
   }
+  // InterAccess2(p, e, field) -> intersection_access(p, e, field, c)
 }
 
 fn ident(p, id, c: Context) -> Monad(Expr3) {
@@ -139,7 +141,10 @@ fn func(p, args, body, c: Context) -> Monad(Expr3) {
         |> with_state(state)
       use argt2, state <- do(expr(a.t, c))
       return(
-        #([Arg3(mode: a.mode, id: a.id, t: argt2), ..so_far], insert(gamma, Local(a.id), argt2)),
+        #(
+          [Arg3(mode: a.mode, id: a.id, t: argt2), ..so_far],
+          insert(gamma, Local(a.id), argt2),
+        ),
         state,
       )
     },
@@ -151,10 +156,7 @@ fn func(p, args, body, c: Context) -> Monad(Expr3) {
     |> with_gamma(gamma)
     |> with_state(state)
   use body2, state <- do(expr(body, c))
-  return(
-    Func3(p, TPi3(p, args, typeof(body2)), args, body2),
-    state,
-  )
+  return(Func3(p, TPi3(p, args, typeof(body2)), args, body2), state)
 }
 
 fn pi(p, args, body, c: Context) -> Monad(Expr3) {
@@ -170,7 +172,10 @@ fn pi(p, args, body, c: Context) -> Monad(Expr3) {
         |> with_state(state)
       use argt2, state <- do(expr(a.t, c))
       return(
-        #([Arg3(mode: a.mode, id: a.id, t: argt2), ..so_far], insert(gamma, Local(a.id), argt2)),
+        #(
+          [Arg3(mode: a.mode, id: a.id, t: argt2), ..so_far],
+          insert(gamma, Local(a.id), argt2),
+        ),
         state,
       )
     },
@@ -203,6 +208,19 @@ fn intersection(p, ts, c: Context) -> Monad(Expr3) {
   )
   let ts = list.reverse(ts_rev)
   return(TInter3(p, ts), state)
+}
+
+fn projection(p, e, i, c: Context) -> Monad(Expr3) {
+  use e, state <- do(expr(e, c))
+  case typeof(e) {
+    TInter3(_, fields) -> {
+      case list.at(fields, i) {
+        Ok(f) -> return(Projection3(p, f.1, e, i), state)
+        Error(Nil) -> fail(UnknownInterField(p, typeof(e), i))
+      }
+    }
+    _ -> fail(AccessingNonInter(p, e, i))
+  }
 }
 
 // fn intersection_access(p, e, field, c: Context) -> Monad(Expr3) {
@@ -248,7 +266,11 @@ fn instantiate(solutions: Map(Id, Expr3), t: Expr3) -> Expr3 {
         i(body),
       )
     TPi3(p, args, body) ->
-      TPi3(p, list.map(args, fn(a) { Arg3(mode: a.mode, id: a.id, t: i(a.t)) }), i(body))
+      TPi3(
+        p,
+        list.map(args, fn(a) { Arg3(mode: a.mode, id: a.id, t: i(a.t)) }),
+        i(body),
+      )
     App3(p, t, func, args) -> App3(p, i(t), i(func), list.map(args, i))
     _ -> t
   }
@@ -259,11 +281,9 @@ fn eval(e: Expr3, env: Map(Ident, Expr3), state: State) -> Monad(Expr3) {
     Ident3(p, t, i) -> eval_ident(p, t, i, env, state)
     Int3(_, _) -> return(e, state)
     Builtin3(_, t, _) -> eval_builtin(e, t, env, state)
-    Func3(p, t, args, body) ->
-      eval_func(p, t, args, body, env, state)
+    Func3(p, t, args, body) -> eval_func(p, t, args, body, env, state)
     App3(_, t, func, args) -> eval_application(t, func, args, env, state)
-    TPi3(p, args, body) ->
-      eval_pi(p, args, body, env, state)
+    TPi3(p, args, body) -> eval_pi(p, args, body, env, state)
     TType3(p) -> return(TType3(p), state)
     TKind3(p) -> return(TKind3(p), state)
     _ -> panic("todo")

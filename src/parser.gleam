@@ -1,8 +1,7 @@
 import core.{
-  type Expr1, type Library0, type Library1, type Module0, type Module1,
-  type Stmt1, App1, Builtin1, CouldntOpenFile, Def1, type Error, Func1,
-  Ident1, Int1, Library1, Module1, ParseError, Arg1, ArgMode,
-  TInter1, TPi1,
+  type Error, type Expr1, type Library0, type Library1, type Module0,
+  type Module1, type Stmt1, App1, Arg1, ArgMode, Builtin1, CouldntOpenFile, Def1,
+  Func1, Ident1, Int1, Library1, Module1, ParseError, Projection1, TInter1, TPi1,
 }
 import gleam/string
 import gleam/int
@@ -46,6 +45,10 @@ fn parse_module(mod: Module0, state: State) -> Monad(Module1) {
     Module1(mod.path, subs, symbol_table, mod.files, list.reverse(ast)),
     state,
   )
+}
+
+fn intstring() -> Parser(Int, Nil) {
+  try(party.map(many1(digit()), string.concat), int.parse)
 }
 
 fn intlit() -> Parser(Expr1, Nil) {
@@ -198,19 +201,18 @@ fn postfix(e: Expr1, path: String) -> Parser(Expr1, Nil) {
           postfix(e, path)
         }
         Error(Nil) -> {
-          // use mb_dot <- do(perhaps(char(".")))
-          // use _ <- do(ws())
-          // case mb_dot {
-          //   Ok(_) -> {
-          //     use _ <- do(ws())
-          //     use fieldname <- do(identstring())
-          //     let e = DotAccess1(pos, e, fieldname)
-          //     use _ <- do(ws())
-          //     postfix(e, path)
-          //   }
-          //   Error(Nil) -> return(e)
-          // }
-          return(e)
+          use mb_dot <- do(perhaps(char(".")))
+          use _ <- do(ws())
+          case mb_dot {
+            Ok(_) -> {
+              use _ <- do(ws())
+              use idx <- do(intstring())
+              let e = Projection1(pos, e, idx)
+              use _ <- do(ws())
+              postfix(e, path)
+            }
+            Error(Nil) -> return(e)
+          }
         }
       }
     }

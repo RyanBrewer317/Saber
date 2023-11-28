@@ -36,10 +36,7 @@ fn construct_module(path: String, state: State) -> Monad(Module0) {
       )
     case simplifile.is_directory(file_name) {
       True -> {
-        use module, state <- do(construct_module(
-          file_name,
-          state,
-        ))
+        use module, state <- do(construct_module(file_name, state))
         return(#([module, ..subs], files), state)
       }
       False -> return(#(subs, [file_name, ..files]), state)

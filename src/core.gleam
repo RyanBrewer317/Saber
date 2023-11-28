@@ -60,8 +60,8 @@ pub type Error {
   ParseError(String, ParseError(Nil))
   Undefined(String, Position, String)
   TypeError(Position, Expr3, Expr3)
-  UnknownInterField(Position, Expr3, String)
-  AccessingNonInter(Position, Expr3, String)
+  UnknownInterField(Position, Expr3, Int)
+  AccessingNonInter(Position, Expr3, Int)
   CallingNonFunction(Expr3)
   CallingNonForall(Expr3)
   SortMismatch(Position, Expr3, Expr3)
@@ -82,11 +82,14 @@ pub fn pretty_err(e: Error) -> String {
       "Type error! Couldn't unify " <> pretty_expr3(t1) <> " and " <> pretty_expr3(
         t2,
       ) <> " at " <> string.inspect(pos)
-    UnknownInterField(pos, t, field) ->
-      "Type Error! Trying to access field " <> field <> " on a value of type " <> pretty_expr3(
+    UnknownInterField(pos, t, i) ->
+      "Type Error! Trying to access component " <> to_string(i) <> " on a value of type " <> pretty_expr3(
         t,
       ) <> " at " <> string.inspect(pos)
-    AccessingNonInter(pos, e, field) -> "Type Error! Accessing field " <> field <> " of non-intersection expression " <> pretty_expr3(e) <> " at " <> string.inspect(pos)
+    AccessingNonInter(pos, e, i) ->
+      "Type Error! Accessing component " <> to_string(i) <> " of non-intersection expression " <> pretty_expr3(
+        e,
+      ) <> " at " <> string.inspect(pos)
     CallingNonFunction(t) ->
       "Type error! Calling non-function of type " <> pretty_expr3(t) <> " as if it were a function"
     CallingNonForall(t) ->
@@ -129,6 +132,7 @@ pub type Expr1 {
   Int1(pos: Position, val: Int)
   Ident1(pos: Position, path: String, name: String)
   Builtin1(pos: Position, name: String)
+  Projection1(pos: Position, expr: Expr1, idx: Int)
   // DotAccess1(pos: Position, expr: Expr1, name: String)
   Func1(pos: Position, args: List(Arg1), body: Expr1)
   App1(pos: Position, func: Expr1, args: List(Expr1))
@@ -151,6 +155,7 @@ pub type Expr2 {
   Int2(pos: Position, val: Int)
   Ident2(pos: Position, id: Ident)
   Builtin2(pos: Position, name: String)
+  Projection2(pos: Position, expr: Expr2, idx: Int)
   // InterAccess2(pos: Position, expr: Expr2, name: String)
   Func2(pos: Position, args: List(Arg2), body: Expr2)
   App2(pos: Position, func: Expr2, args: List(Expr2))
@@ -171,6 +176,7 @@ pub type Expr3 {
   Int3(pos: Position, val: Int)
   Ident3(pos: Position, t: Expr3, id: Ident)
   Builtin3(pos: Position, t: Expr3, name: String)
+  Projection3(pos: Position, t: Expr3, expr: Expr3, idx: Int)
   // InterAccess3(pos: Position, t: Expr3, expr: Expr3, name: String)
   Func3(pos: Position, t: Expr3, args: List(Arg3), body: Expr3)
   App3(pos: Position, t: Expr3, func: Expr3, args: List(Expr3))
@@ -199,6 +205,7 @@ pub fn pretty_expr3(e: Expr3) -> String {
     Ident3(_, _, Local(id)) -> "x" <> to_string(id)
     Ident3(_, _, Global(name)) -> name
     Builtin3(_, _, name) -> name
+    Projection3(_, _, e, idx) -> pretty_expr3(e) <> "." <> to_string(idx)
     // InterAccess3(_, _, e, field) -> pretty_expr3(e) <> "." <> field
     Func3(_, _, args, body) ->
       "fn(" <> {
@@ -252,6 +259,7 @@ pub fn contains3(e: Expr3, id: Id) -> Bool {
     Ident3(_, _, Local(x)) if x == id -> True
     Ident3(_, t, _) -> c(t)
     Builtin3(_, t, _) -> c(t)
+    Projection3(_, t, e, _) -> c(t) || c(e)
     Func3(_, t, args, body) ->
       c(t) || list.any(args, fn(a) { c(a.t) }) || c(body)
     App3(_, t, func, args) -> c(t) || c(func) || list.any(args, c)
@@ -269,7 +277,7 @@ pub fn substitute(id: Id, new: Expr3, t: Expr3) -> Expr3 {
     Ident3(_, _, Local(x)) if id == x -> new
     Ident3(_, _, _) -> t
     Builtin3(_, _, _) -> t
-    Ident3(_, _, _) -> t
+    Projection3(pos, t, e, i) -> Projection3(pos, sub(t), sub(e), i)
     Func3(pos, t, args, body) ->
       case list.any(args, fn(a) { a.id == id }) {
         True -> t
@@ -301,8 +309,8 @@ pub fn substitute(id: Id, new: Expr3, t: Expr3) -> Expr3 {
     TType3(_) -> t
     TKind3(_) -> t
     TInter3(pos, ts) -> TInter3(pos, list.map(ts, fn(t) { #(t.0, sub(t.1)) }))
-    // InterAccess3(pos, t, e, field) -> InterAccess3(pos, sub(t), sub(e), field)
   }
+  // InterAccess3(pos, t, e, field) -> InterAccess3(pos, sub(t), sub(e), field)
 }
 
 fn swap_ident(from id: Id, to new: Id, in t: Expr3) -> Expr3 {
@@ -313,6 +321,7 @@ fn swap_ident(from id: Id, to new: Id, in t: Expr3) -> Expr3 {
     Ident3(_, _, _) -> t
     Ident3(_, _, _) -> t
     Builtin3(_, _, _) -> t
+    Projection3(pos, t, e, i) -> Projection3(pos, sub(t), sub(e), i)
     Func3(pos, t, args, body) ->
       case list.any(args, fn(a) { a.id == new }) {
         True -> t
@@ -339,8 +348,8 @@ fn swap_ident(from id: Id, to new: Id, in t: Expr3) -> Expr3 {
     TType3(_) -> t
     TKind3(_) -> t
     TInter3(pos, ts) -> TInter3(pos, list.map(ts, fn(t) { #(t.0, sub(t.1)) }))
-    // InterAccess3(pos, t, e, field) -> InterAccess3(pos, sub(t), sub(e), field)
   }
+  // InterAccess3(pos, t, e, field) -> InterAccess3(pos, sub(t), sub(e), field)
 }
 
 pub fn binder_eq(args1, body1, args2, body2) -> Bool {
@@ -392,9 +401,9 @@ pub fn alpha_eq(e1: Expr3, e2: Expr3) -> Bool {
           alpha_eq(t1, t2)
         },
       )
-    // InterAccess3(_, t1, e1, field1), InterAccess3(_, t2, e2, field2) -> alpha_eq(t1, t2) && alpha_eq(e1, e2) && field1 == field2
-    // _, _ -> False
   }
+  // InterAccess3(_, t1, e1, field1), InterAccess3(_, t2, e2, field2) -> alpha_eq(t1, t2) && alpha_eq(e1, e2) && field1 == field2
+  // _, _ -> False
 }
 
 pub type Stmt3 {
@@ -408,7 +417,11 @@ pub fn pretty_stmt3(s: Stmt3) -> String {
       "fn " <> name <> "(" <> string.join(
         list.map(
           args,
-          fn(a) { pretty_arg_mode(a.mode) <> "x" <> to_string(a.id) <> ": " <> pretty_expr3(a.t) },
+          fn(a) {
+            pretty_arg_mode(a.mode) <> "x" <> to_string(a.id) <> ": " <> pretty_expr3(
+              a.t,
+            )
+          },
         ),
         ", ",
       ) <> ") -> " <> pretty_expr3(rett) <> " {\n  " <> pretty_expr3(body) <> "\n}"
@@ -421,6 +434,7 @@ pub fn typeof(e: Expr3) -> Expr3 {
     Int3(pos, _) -> Builtin3(pos, TType3(pos), "int")
     Ident3(_, t, _) -> t
     Builtin3(_, t, _) -> t
+    Projection3(_, t, _, _) -> t
     // InterAccess3(_, t, _, _) -> t
     Func3(_, t, _, _) -> t
     App3(_, t, _, _) -> t
