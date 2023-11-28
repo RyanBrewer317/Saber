@@ -3,11 +3,12 @@ import gleam/result
 import gleam/list
 // import gleam/string
 import parser
-import core.{CouldntOpenFile, Library0, Module0, pretty_err}
-import monad.{Monad, State, do, monadic_fold, return, try}
+import core.{
+  type Library0, type Module0, CouldntOpenFile, Library0, Module0, pretty_err,
+}
+import monad.{type Monad, type State, do, monadic_fold, return, try}
 import ast
 import type_check
-import elab
 import eval
 import shellout.{arguments}
 import simplifile
@@ -20,7 +21,7 @@ fn construct_library(path: String, state: State) -> Monad(Library0) {
 fn construct_module(path: String, state: State) -> Monad(Module0) {
   let assert True = simplifile.is_directory(path)
   use file_names, state <- try(
-    simplifile.list_contents(path)
+    simplifile.get_files(path)
     |> result.replace_error(CouldntOpenFile(path)),
     state,
   )
@@ -33,10 +34,10 @@ fn construct_module(path: String, state: State) -> Monad(Module0) {
         with: _,
         then: return,
       )
-    case simplifile.is_directory(path <> "/" <> file_name) {
+    case simplifile.is_directory(file_name) {
       True -> {
         use module, state <- do(construct_module(
-          path <> "/" <> file_name,
+          file_name,
           state,
         ))
         return(#([module, ..subs], files), state)
@@ -72,8 +73,7 @@ pub fn main() {
     use lib3, state <- do(type_check.annotate_lib(lib2, state))
     // io.println(string.join(list.map(lib3.entry.ast, core.pretty_stmt3), "\n\n"))
     // io.println("Type checked!")
-    use lib4, state <- do(elab.elaborate_lib(lib3, state))
-    eval.eval_lib(lib4, state)
+    eval.eval_lib(lib3, state)
   }
   let res = monad.eval(m)
   case res {

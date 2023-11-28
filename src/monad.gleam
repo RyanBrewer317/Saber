@@ -1,6 +1,6 @@
-import core.{Error, ExtendedError, Id}
+import core.{type Error, type Id, ExtendedError}
 import gleam/io
-import gleam/string_builder.{StringBuilder}
+import gleam/string_builder.{type StringBuilder}
 
 pub opaque type State {
   State(id: Id, log: StringBuilder)

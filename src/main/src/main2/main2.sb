@@ -1,10 +1,10 @@
-fn first[a, b](x: a, y: b) -> a {
+fn first(@a: type, @b: type, x: a, y: b) -> a {
   x
 }
-fn second[a, b](x: a, y: b) -> b {
+fn second(@a: type, @b: type, x: a, y: b) -> b {
   y
 }
-fn id[a](x: a) -> a {
+fn id(@a: type, x: a) -> a {
   x
 }
 fn hi() -> int {

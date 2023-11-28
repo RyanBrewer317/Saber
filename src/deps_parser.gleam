@@ -1,12 +1,12 @@
 import party.{
-  Parser, alt, char, choice, digit, do, letter, many, many1, map, return,
+  type Parser, alt, char, choice, digit, do, letter, many, many1, map, return,
   satisfy,
 }
 import gleam/string.{concat}
 import gleam/int
 import gleam/result
 import gleam/list
-import gleam/map.{Map}
+import gleam/map.{type Map}
 
 fn comment() -> Parser(Nil, e) {
   use _ <- do(char("#"))

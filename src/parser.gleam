@@ -1,18 +1,19 @@
 import core.{
-  App1, Builtin1, CouldntOpenFile, Def1, DotAccess1, Error, Expr1, Func1, Ident1,
-  Import1, Int1, Library0, Library1, Module0, Module1, ParseError, Stmt1,
-  Struct1, TDynamic1, TPi1, TStruct1, TInter1
+  type Expr1, type Library0, type Library1, type Module0, type Module1,
+  type Stmt1, App1, Builtin1, CouldntOpenFile, Def1, type Error, Func1,
+  Ident1, Int1, Library1, Module1, ParseError, Arg1, ArgMode,
+  TInter1, TPi1,
 }
 import gleam/string
 import gleam/int
 import gleam/result
 import gleam/list
-import gleam/map.{Map}
+import gleam/map.{type Map}
 import party.{
-  Parser, alphanum, alt, char, choice, digit, do, end, lazy, lowercase_letter,
-  many, many1, not, perhaps, pos, return, satisfy, try,
+  type Parser, alphanum, alt, char, choice, digit, do, end, lazy,
+  lowercase_letter, many, many1, not, perhaps, pos, return, satisfy, try,
 }
-import monad.{Monad, State, monadic_map}
+import monad.{type Monad, type State, monadic_map}
 import simplifile
 
 pub fn parse_lib(lib: Library0, state: State) -> Monad(Library1) {
@@ -26,11 +27,11 @@ fn parse_module(mod: Module0, state: State) -> Monad(Module1) {
     state,
     fn(filename, state) {
       use code, state <- monad.try(
-        simplifile.read(mod.path <> "/" <> filename)
+        simplifile.read(filename)
         |> result.replace_error(CouldntOpenFile(filename)),
         state,
       )
-      parse(mod.path <> "/" <> filename, code, state)
+      parse(filename, code, state)
     },
   )
 
@@ -76,36 +77,24 @@ fn lamlit(path: String) -> Parser(Expr1, Nil) {
   use pos <- do(pos())
   use _ <- do(party.string("fn"))
   use _ <- do(ws())
-  use res <- do(perhaps(char("[")))
-  use imp_args <- do(case res {
-    Ok(_) -> {
-      use out <- do(comma_sep({
-        use _ <- do(ws())
-        use x <- do(identstring())
-        use _ <- do(ws())
-        return(x)
-      }))
-      use _ <- do(char("]"))
-      return(out)
-    }
-    Error(Nil) -> return([])
-  })
-  use _ <- do(ws())
   use _ <- do(char("("))
   use args <- do(comma_sep({
+    use _ <- do(ws())
+    use res <- do(perhaps(char("@")))
+    let imp = result.is_ok(res)
     use _ <- do(ws())
     use arg <- do(identstring())
     use _ <- do(ws())
     use res <- do(perhaps(char(":")))
     use argt <- do(case res {
       Ok(_) -> lazy(expr(path))
-      Error(_) -> return(TDynamic1(pos))
+      Error(_) -> return(Builtin1(pos, "dyn"))
     })
-    return(#(arg, argt))
+    return(Arg1(ArgMode(imp), arg, argt))
   }))
   use _ <- do(char(")"))
   use e <- do(lazy(expr(path)))
-  return(Func1(pos, imp_args, args, e))
+  return(Func1(pos, args, e))
 }
 
 fn paren(p: Parser(a, e)) -> Parser(a, e) {
@@ -142,51 +131,23 @@ fn comma_sep(parser: Parser(a, e)) -> Parser(List(a), e) {
 
 fn tforall(path: String) -> Parser(Expr1, Nil) {
   use pos <- do(pos())
-  use _ <- do(party.string("Pi"))
-  use _ <- do(ws())
-  use res <- do(perhaps(char("[")))
-  use implicit_args <- do(case res {
-    Ok(_) -> {
-      use out <- do(comma_sep({
-        use _ <- do(ws())
-        use arg <- do(identstring())
-        use _ <- do(ws())
-        return(arg)
-      }))
-      use _ <- do(char("]"))
-      return(out)
-    }
-    Error(Nil) -> return([])
-  })
+  use _ <- do(party.string("Fn"))
   use _ <- do(ws())
   use _ <- do(char("("))
   use args <- do(comma_sep({
+    use _ <- do(ws())
+    use res <- do(perhaps(char("@")))
+    let imp = result.is_ok(res)
     use _ <- do(ws())
     use arg <- do(identstring())
     use _ <- do(ws())
     use _ <- do(char(":"))
     use t <- do(lazy(expr(path)))
-    return(#(arg, t))
+    return(Arg1(ArgMode(imp), arg, t))
   }))
   use _ <- do(char(")"))
   use body <- do(lazy(expr(path)))
-  return(TPi1(pos, implicit_args, args, body))
-}
-
-fn struct(path: String) -> Parser(Expr1, Nil) {
-  use pos <- do(pos())
-  use _ <- do(char("{"))
-  use fields <- do(comma_sep({
-    use _ <- do(ws())
-    use name <- do(identstring())
-    use _ <- do(ws())
-    use _ <- do(char(":"))
-    use val <- do(lazy(expr(path)))
-    use _ <- do(ws())
-    return(#(name, val))
-  }))
-  use _ <- do(char("}"))
-  return(Struct1(pos, fields))
+  return(TPi1(pos, args, body))
 }
 
 fn tinter(path: String) -> Parser(Expr1, Nil) {
@@ -206,25 +167,6 @@ fn tinter(path: String) -> Parser(Expr1, Nil) {
   }))
   use _ <- do(char("}"))
   return(TInter1(pos, fields))
-}
-
-fn tstruct(path: String) -> Parser(Expr1, Nil) {
-  use pos <- do(pos())
-  use _ <- do(party.string("struct"))
-  use _ <- do(not(alt(alphanum(), char("_"))))
-  use _ <- do(ws())
-  use _ <- do(char("{"))
-  use fields <- do(comma_sep({
-    use _ <- do(ws())
-    use name <- do(identstring())
-    use _ <- do(ws())
-    use _ <- do(char(":"))
-    use t <- do(lazy(expr(path)))
-    use _ <- do(ws())
-    return(#(name, t))
-  }))
-  use _ <- do(char("}"))
-  return(TStruct1(pos, fields))
 }
 
 fn ws() -> Parser(Nil, a) {
@@ -251,23 +193,24 @@ fn postfix(e: Expr1, path: String) -> Parser(Expr1, Nil) {
       case mb_arr {
         Ok(_) -> {
           use rhs <- do(lazy(expr(path)))
-          let e = TPi1(pos, [], [#("_", e)], rhs)
+          let e = TPi1(pos, [Arg1(ArgMode(False), "_", e)], rhs)
           use _ <- do(ws())
           postfix(e, path)
         }
         Error(Nil) -> {
-          use mb_dot <- do(perhaps(char(".")))
-          use _ <- do(ws())
-          case mb_dot {
-            Ok(_) -> {
-              use _ <- do(ws())
-              use fieldname <- do(identstring())
-              let e = DotAccess1(pos, e, fieldname)
-              use _ <- do(ws())
-              postfix(e, path)
-            }
-            Error(Nil) -> return(e)
-          }
+          // use mb_dot <- do(perhaps(char(".")))
+          // use _ <- do(ws())
+          // case mb_dot {
+          //   Ok(_) -> {
+          //     use _ <- do(ws())
+          //     use fieldname <- do(identstring())
+          //     let e = DotAccess1(pos, e, fieldname)
+          //     use _ <- do(ws())
+          //     postfix(e, path)
+          //   }
+          //   Error(Nil) -> return(e)
+          // }
+          return(e)
         }
       }
     }
@@ -278,8 +221,6 @@ fn expr(path: String) -> fn() -> Parser(Expr1, Nil) {
   fn() {
     use _ <- do(ws())
     use lit <- do(choice([
-      struct(path),
-      tstruct(path),
       tinter(path),
       tforall(path),
       intlit(),
@@ -295,15 +236,6 @@ fn expr(path: String) -> fn() -> Parser(Expr1, Nil) {
   }
 }
 
-fn import_stmt(path) -> Parser(#(Stmt1, String, Expr1), e) {
-  use pos <- do(pos())
-  use _ <- do(party.string("import"))
-  use _ <- do(not(alt(alphanum(), char("_"))))
-  use _ <- do(ws())
-  use name <- do(identstring())
-  return(#(Import1(pos, name), name, Ident1(pos, path, "dyn")))
-}
-
 fn fn_def(path: String) -> Parser(#(Stmt1, String, Expr1), Nil) {
   use _ <- do(ws())
   use pos <- do(pos())
@@ -312,47 +244,35 @@ fn fn_def(path: String) -> Parser(#(Stmt1, String, Expr1), Nil) {
   use _ <- do(ws())
   use name <- do(identstring())
   use _ <- do(ws())
-  use res <- do(perhaps(char("[")))
-  use implicit_args <- do(case res {
-    Ok(_) -> {
-      use out <- do(comma_sep({
-        use _ <- do(ws())
-        use arg <- do(identstring())
-        use _ <- do(ws())
-        return(arg)
-      }))
-      use _ <- do(char("]"))
-      return(out)
-    }
-    Error(Nil) -> return([])
-  })
-  use _ <- do(ws())
   use _ <- do(char("("))
   use args <- do(comma_sep({
     use _ <- do(ws())
+    use res <- do(perhaps(char("@")))
+    let imp = result.is_ok(res)
     use arg <- do(identstring())
     use _ <- do(ws())
     use _ <- do(char(":"))
     use t <- do(lazy(expr(path)))
-    return(#(arg, t))
+    return(Arg1(ArgMode(imp), arg, t))
   }))
   use _ <- do(char(")"))
   use _ <- do(ws())
   use mb_ret_t <- do(perhaps(party.string("->")))
   use ret_t <- do(case mb_ret_t {
     Ok(_) -> expr(path)()
-    Error(Nil) -> return(Ident1(pos, path, "dyn"))
+    Error(Nil) -> return(Builtin1(pos, "dyn"))
   })
-  let t = TPi1(pos, implicit_args, args, ret_t)
+  let t = TPi1(pos, args, ret_t)
+  use _ <- do(ws())
   use _ <- do(char("{"))
   use body <- do(expr(path)())
   use _ <- do(char("}"))
   use _ <- do(lazy(ws))
-  return(#(Def1(pos, name, t, Func1(pos, implicit_args, args, body)), name, t))
+  return(#(Def1(pos, name, t, Func1(pos, args, body)), name, t))
 }
 
 fn stmt(path: String) -> Parser(#(Stmt1, String, Expr1), Nil) {
-  choice([fn_def(path), import_stmt(path)])
+  choice([fn_def(path)])
 }
 
 fn parse(
