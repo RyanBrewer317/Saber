@@ -1,9 +1,9 @@
 import core.{
-  type Expr3, type Ident, type Library3, type Module3, type Stmt3, App3,
-  Builtin3, Def3, Func3, Global, Ident3, Import3, Int3, Local, Projection3,
-  TInter3, TKind3, TPi3, TType3, ident_to_str,
+  type Expr3, type Ident, type Library3, type Module3, type Monad, type State,
+  type Stmt3, App3, Builtin3, Def3, Func3, Global, Ident3, Import3, Int3, Inter3,
+  Local, Projection3, TInter3, TKind3, TPi3, TType3, do, ident_to_str,
+  monadic_fold, monadic_map, return,
 }
-import monad.{type Monad, type State, do, monadic_fold, monadic_map, return}
 import gleam/list
 import gleam/string
 import gleam/result
@@ -179,7 +179,8 @@ fn expr(
     TInter3(p, ts) -> {
       return(TInter3(p, ts), state)
     }
-    Projection3(p, t, e, i) -> todo
+    Projection3(_, _, _, _) -> todo
+    Inter3(_, _, _) -> todo
   }
   // InterAccess3(p, t, e, field) -> return(e, state) // TODO: eval will be operating on pure lambda terms, not annotated ones
   // type code won't execute unless from a value

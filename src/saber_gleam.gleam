@@ -4,9 +4,9 @@ import gleam/list
 // import gleam/string
 import parser
 import core.{
-  type Library0, type Module0, CouldntOpenFile, Library0, Module0, pretty_err,
+  type Library0, type Module0, type Monad, type State, CouldntOpenFile, Library0,
+  Module0, do, monadic_fold, pretty_err, return, try,
 }
-import monad.{type Monad, type State, do, monadic_fold, return, try}
 import ast
 import type_check
 import eval
@@ -58,7 +58,7 @@ fn argpos() {
 
 pub fn main() {
   let m = {
-    use state <- monad.start()
+    use state <- core.start()
     use path, state <- try(
       list.at(arguments(), argpos())
       |> result.replace_error(CouldntOpenFile("no path provided")),
@@ -72,7 +72,7 @@ pub fn main() {
     // io.println("Type checked!")
     eval.eval_lib(lib3, state)
   }
-  let res = monad.eval(m)
+  let res = core.eval(m)
   case res {
     Ok(Nil) -> "ok"
     Error(e) -> pretty_err(e)

@@ -1,13 +1,10 @@
 import core.{
   type Expr1, type Expr2, type Id, type Library1, type Library2, type Module1,
-  type Module2, type Stmt1, type Stmt2, App1, App2, Arg2, Builtin1, Builtin2,
-  Def1, Def2, Func1, Func2, Global, Ident1, Ident2, Int1, Int2, Library2, Local,
-  Module2, Projection1, Projection2, TInter1, TInter2, TPi1, TPi2, TType2,
-  Undefined,
-}
-import monad.{
-  type Monad, type State, do, fail, fresh, label, monadic_fold, monadic_map,
-  return,
+  type Module2, type Monad, type State, type Stmt1, type Stmt2, App1, App2, Arg2,
+  Builtin1, Builtin2, Def1, Def2, Func1, Func2, Global, Ident1, Ident2, Int1,
+  Int2, Inter1, Inter2, Library2, Local, Module2, Projection1, Projection2,
+  TInter1, TInter2, TPi1, TPi2, TType2, Undefined, do, fail, fresh, label,
+  monadic_fold, monadic_map, return,
 }
 import gleam/list
 import gleam/map
@@ -47,7 +44,7 @@ fn build_mod(mod1: Module1, state: State) -> Monad(Module2) {
     state,
     fn(st, entry, state) {
       let #(k, v) = entry
-      monad.fmap(expr(v, renames, mod1, state), map.insert(st, k, _))
+      core.fmap(expr(v, renames, mod1, state), map.insert(st, k, _))
     },
   )
   return(
@@ -90,6 +87,29 @@ fn expr(e: Expr1, renames: Renames, mod: Module1, state: State) -> Monad(Expr2) 
     Projection1(p, e, idx) -> {
       use e, state <- do(expr(e, renames, mod, state))
       return(Projection2(p, e, idx), state)
+    }
+    Inter1(p, components) -> {
+      use #(components_rev, _), state <- monadic_fold(
+        components,
+        #([], renames),
+        state,
+        fn(so_far, c, state) {
+          let #(c_id, c_val, c_type) = c
+          let #(components_rev, renames) = so_far
+          use c_val, state <- do(expr(c_val, renames, mod, state))
+          use c_type, state <- do(expr(c_type, renames, mod, state))
+          use new_id, state <- fresh(state)
+          return(
+            #(
+              [#(new_id, c_val, c_type), ..components_rev],
+              [#(c_id, new_id), ..renames],
+            ),
+            state,
+          )
+        },
+      )
+      let components = list.reverse(components_rev)
+      return(Inter2(p, components), state)
     }
 
     // DotAccess1(p, e, field) -> {

@@ -4,6 +4,145 @@ import gleam/list
 import gleam/bool.{guard}
 import gleam/map.{type Map}
 import party.{type ParseError, type Position}
+import gleam/io
+import gleam/string_builder.{type StringBuilder}
+
+pub opaque type State {
+  State(id: Id, log: StringBuilder)
+}
+
+pub opaque type Monad(a) {
+  Cont(State, a)
+  Fail(Error)
+}
+
+pub fn do(ma: Monad(a), f: fn(a, State) -> Monad(b)) -> Monad(b) {
+  case ma {
+    Cont(state, val) -> f(val, state)
+    Fail(e) -> Fail(e)
+  }
+}
+
+pub fn fresh(state: State, k: fn(Id, State) -> Monad(b)) -> Monad(b) {
+  k(state.id, State(state.id + 1, state.log))
+}
+
+pub fn return(x: a, state: State) -> Monad(a) {
+  Cont(state, x)
+}
+
+pub fn try(
+  x: Result(a, Error),
+  state: State,
+  k: fn(a, State) -> Monad(b),
+) -> Monad(b) {
+  case x {
+    Ok(val) -> k(val, state)
+    Error(e) -> Fail(e)
+  }
+}
+
+pub fn fail(e: Error) -> Monad(a) {
+  Fail(e)
+}
+
+pub fn eval(ma: Monad(a)) -> Result(a, Error) {
+  case ma {
+    Cont(state, val) -> {
+      io.println(string_builder.to_string(state.log))
+      Ok(val)
+    }
+    Fail(e) -> Error(e)
+  }
+}
+
+pub fn start(k: fn(State) -> Monad(a)) -> Monad(a) {
+  k(State(0, string_builder.new()))
+}
+
+pub fn monadic_map(
+  l: List(a),
+  state: State,
+  f: fn(a, State) -> Monad(b),
+  k: fn(List(b), State) -> Monad(c),
+) -> Monad(c) {
+  case l {
+    [] -> k([], state)
+    [x, ..xs] -> {
+      case f(x, state) {
+        Cont(state, x2) -> {
+          use xs2, state <- monadic_map(xs, state, f)
+          k([x2, ..xs2], state)
+        }
+        Fail(e) -> Fail(e)
+      }
+    }
+  }
+}
+
+pub fn fmap(ma: Monad(a), f: fn(a) -> b) -> Monad(b) {
+  case ma {
+    Cont(state, x) -> Cont(state, f(x))
+    Fail(e) -> Fail(e)
+  }
+}
+
+pub fn monadic_fold(
+  over l: List(a),
+  from base: b,
+  using state: State,
+  with f: fn(b, a, State) -> Monad(b),
+  then k: fn(b, State) -> Monad(c),
+) -> Monad(c) {
+  case l {
+    [] -> k(base, state)
+    [x, ..xs] -> {
+      case f(base, x, state) {
+        Cont(state, b2) -> {
+          monadic_fold(xs, b2, state, f, k)
+        }
+        Fail(e) -> Fail(e)
+      }
+    }
+  }
+}
+
+pub fn when(
+  cond: Bool,
+  ma: Monad(Nil),
+  state: State,
+  k: fn(State) -> Monad(a),
+) -> Monad(a) {
+  case cond {
+    True ->
+      case ma {
+        Cont(state, Nil) -> k(state)
+        Fail(e) -> Fail(e)
+      }
+    False -> k(state)
+  }
+}
+
+pub fn unwrap(ma: Monad(a)) -> a {
+  case ma {
+    Cont(_, x) -> x
+    Fail(_) -> panic("")
+  }
+}
+
+pub fn log(msg: a) -> a {
+  io.debug(msg)
+  msg
+}
+
+pub fn label(msg: String, state: State, k: fn(State) -> Monad(a)) -> Monad(a) {
+  // io.println(msg)
+  let x = k(state)
+  case x {
+    Cont(_, _) -> x
+    Fail(e) -> Fail(ExtendedError(e, msg))
+  }
+}
 
 pub type Library0 {
   Library0(path: String, entry: Module0)
@@ -60,14 +199,17 @@ pub type Error {
   ParseError(String, ParseError(Nil))
   Undefined(String, Position, String)
   TypeError(Position, Expr3, Expr3)
-  UnknownInterField(Position, Expr3, Int)
+  ProjectionOutOfBounds(Position, Expr3, Int)
   AccessingNonInter(Position, Expr3, Int)
+  UnequalIntersectionComponents(Position, Expr3, Expr3)
   CallingNonFunction(Expr3)
   CallingNonForall(Expr3)
   SortMismatch(Position, Expr3, Expr3)
   CallingWrongArity(Position, Expr3, Int)
   TypeAtRuntime(Expr3)
   ExtendedError(Error, String)
+  PureCallingWrongArity(Position, Int, Int)
+  PureCallingNonFunction(Position)
 }
 
 pub fn pretty_err(e: Error) -> String {
@@ -82,14 +224,18 @@ pub fn pretty_err(e: Error) -> String {
       "Type error! Couldn't unify " <> pretty_expr3(t1) <> " and " <> pretty_expr3(
         t2,
       ) <> " at " <> string.inspect(pos)
-    UnknownInterField(pos, t, i) ->
-      "Type Error! Trying to access component " <> to_string(i) <> " on a value of type " <> pretty_expr3(
+    ProjectionOutOfBounds(pos, t, i) ->
+      "Type Error! Projection " <> to_string(i) <> " out of bounds on a value of type " <> pretty_expr3(
         t,
       ) <> " at " <> string.inspect(pos)
     AccessingNonInter(pos, e, i) ->
       "Type Error! Accessing component " <> to_string(i) <> " of non-intersection expression " <> pretty_expr3(
         e,
       ) <> " at " <> string.inspect(pos)
+    UnequalIntersectionComponents(pos, e1, e2) ->
+      "Type Error! An intersection was found to have non-equal components " <> pretty_expr3(
+        e1,
+      ) <> " and " <> pretty_expr3(e2) <> " at " <> string.inspect(pos)
     CallingNonFunction(t) ->
       "Type error! Calling non-function of type " <> pretty_expr3(t) <> " as if it were a function"
     CallingNonForall(t) ->
@@ -105,6 +251,14 @@ pub fn pretty_err(e: Error) -> String {
     TypeAtRuntime(t) ->
       "Runtime error! Found a type at runtime, " <> pretty_expr3(t)
     ExtendedError(e, s) -> "When " <> s <> ", " <> pretty_err(e)
+    PureCallingWrongArity(p, i, j) ->
+      "Type Error! In pure evaluation, using " <> to_string(j) <> " arguments to call a function that expected " <> to_string(
+        i,
+      ) <> " at " <> string.inspect(p)
+    PureCallingNonFunction(p) ->
+      "Type Error! In pure evaluation, calling non function at " <> string.inspect(
+        p,
+      )
   }
 }
 
@@ -133,11 +287,11 @@ pub type Expr1 {
   Ident1(pos: Position, path: String, name: String)
   Builtin1(pos: Position, name: String)
   Projection1(pos: Position, expr: Expr1, idx: Int)
-  // DotAccess1(pos: Position, expr: Expr1, name: String)
   Func1(pos: Position, args: List(Arg1), body: Expr1)
   App1(pos: Position, func: Expr1, args: List(Expr1))
   TPi1(pos: Position, args: List(Arg1), body: Expr1)
   TInter1(pos: Position, args: List(#(String, Expr1)))
+  Inter1(pos: Position, args: List(#(String, Expr1, Expr1)))
 }
 
 pub type Stmt1 {
@@ -162,6 +316,7 @@ pub type Expr2 {
   TPi2(pos: Position, args: List(Arg2), body: Expr2)
   TType2(pos: Position)
   TInter2(pos: Position, args: List(#(Id, Expr2)))
+  Inter2(pos: Position, args: List(#(Id, Expr2, Expr2)))
 }
 
 pub type Stmt2 {
@@ -177,13 +332,128 @@ pub type Expr3 {
   Ident3(pos: Position, t: Expr3, id: Ident)
   Builtin3(pos: Position, t: Expr3, name: String)
   Projection3(pos: Position, t: Expr3, expr: Expr3, idx: Int)
-  // InterAccess3(pos: Position, t: Expr3, expr: Expr3, name: String)
   Func3(pos: Position, t: Expr3, args: List(Arg3), body: Expr3)
   App3(pos: Position, t: Expr3, func: Expr3, args: List(Expr3))
   TPi3(pos: Position, args: List(Arg3), body: Expr3)
   TType3(pos: Position)
   TKind3(pos: Position)
   TInter3(pos: Position, args: List(#(Id, Expr3)))
+  Inter3(pos: Position, t: Expr3, args: List(#(Id, Expr3, Expr3)))
+}
+
+pub type PureExpr {
+  Int(val: Int)
+  Ident(id: Id)
+  Builtin(name: String)
+  Func(args: List(Id), body: PureExpr)
+  App(func: PureExpr, args: List(PureExpr))
+}
+
+pub fn erase(e: Expr3, defs: Map(Ident, Expr3)) -> PureExpr {
+  let erase = erase(_, defs)
+  case e {
+    Int3(_, i) -> Int(i)
+    Ident3(_, _, id) ->
+      case id {
+        Local(id) -> Ident(id)
+        Global(_) ->
+          case map.get(defs, id) {
+            Ok(val) -> erase(val)
+            Error(Nil) -> panic("undefined global during typechecking")
+          }
+      }
+    Builtin3(_, _, name) -> Builtin(name)
+    Projection3(_, _, e, _) -> erase(e)
+    Func3(_, _, args, body) -> Func(list.map(args, fn(a) { a.id }), erase(body))
+    App3(_, _, func, args) -> App(erase(func), list.map(args, erase))
+    Inter3(_, _, args) -> {
+      let assert Ok(first) = list.first(args)
+      erase(first.1)
+    }
+    _ -> panic("")
+  }
+}
+
+fn erased_substitute(from old: Id, to new: PureExpr, in e: PureExpr) -> PureExpr {
+  let swap = erased_substitute(old, new, _)
+  case e {
+    Ident(id) if id == old -> new
+    Func(args, body) ->
+      case list.contains(args, old) {
+        True -> e
+        False -> Func(args, swap(body))
+      }
+    App(func, args) -> App(swap(func), list.map(args, swap))
+    Int(_) | Ident(_) | Builtin(_) -> e
+  }
+}
+
+fn erased_func_eq(
+  args1: List(Id),
+  body1: PureExpr,
+  args2: List(Id),
+  body2: PureExpr,
+) -> Bool {
+  case args1, args2 {
+    [], [] -> body1 == body2
+    [x, ..rest1], [y, ..rest2] ->
+      erased_func_eq(
+        rest1,
+        body1,
+        rest2,
+        erased_substitute(from: y, to: Ident(x), in: body2),
+      )
+    _, _ ->
+      // different number of args
+      False
+  }
+}
+
+pub fn erased_alpha_eq(e1: PureExpr, e2: PureExpr) -> Bool {
+  case e1, e2 {
+    Int(i), Int(j) -> i == j
+    Ident(x), Ident(y) -> x == y
+    Builtin(foo), Builtin(bar) -> foo == bar
+    Func(args1, body1), Func(args2, body2) ->
+      erased_func_eq(args1, body1, args2, body2)
+  }
+}
+
+pub fn normalize(
+  p: Position,
+  e: PureExpr,
+  state: State,
+  heap: Map(Id, PureExpr),
+) -> Monad(PureExpr) {
+  case e {
+    Ident(id) ->
+      case map.get(heap, id) {
+        Ok(val) -> return(val, state)
+        Error(Nil) ->
+          panic(
+            "undefined variable in pure expr, which should be during typechecking",
+          )
+      }
+    App(func, args) -> {
+      use func, state <- do(normalize(p, func, state, heap))
+      case func {
+        Func(formals, body) -> {
+          use <- bool.guard(
+            when: list.length(formals) != list.length(args),
+            return: fail(PureCallingWrongArity(
+              p,
+              list.length(formals),
+              list.length(args),
+            )),
+          )
+          let heap = map.merge(map.from_list(list.zip(formals, args)), heap)
+          normalize(p, body, state, heap)
+        }
+        _ -> fail(PureCallingNonFunction(p))
+      }
+    }
+    Int(_) | Builtin(_) | Func(_, _) -> return(e, state)
+  }
 }
 
 pub fn mod_name_from_path(path: String) -> String {
@@ -206,7 +476,18 @@ pub fn pretty_expr3(e: Expr3) -> String {
     Ident3(_, _, Global(name)) -> name
     Builtin3(_, _, name) -> name
     Projection3(_, _, e, idx) -> pretty_expr3(e) <> "." <> to_string(idx)
-    // InterAccess3(_, _, e, field) -> pretty_expr3(e) <> "." <> field
+    Inter3(_, _, es) ->
+      "[" <> string.join(
+        list.map(
+          es,
+          fn(e) {
+            "x" <> to_string(e.0) <> ": " <> pretty_expr3(e.1) <> ": " <> pretty_expr3(
+              e.2,
+            )
+          },
+        ),
+        ", ",
+      ) <> "]"
     Func3(_, _, args, body) ->
       "fn(" <> {
         args
@@ -265,19 +546,21 @@ pub fn contains3(e: Expr3, id: Id) -> Bool {
     App3(_, t, func, args) -> c(t) || c(func) || list.any(args, c)
     TPi3(_, args, body) -> list.any(args, fn(a) { c(a.t) }) || c(body)
     TInter3(_, ts) -> list.any(ts, fn(t) { c(t.1) })
-    // InterAccess3(_, t, e, _) -> c(t) || c(e)
+    Inter3(_, t, es) -> c(t) || list.any(es, fn(e) { c(e.1) })
     Int3(_, _) | TType3(_) | TKind3(_) -> False
   }
 }
 
-pub fn substitute(id: Id, new: Expr3, t: Expr3) -> Expr3 {
+pub fn substitute(from id: Id, to new: Expr3, in e: Expr3) -> Expr3 {
   let sub = substitute(id, new, _)
-  case t {
-    Int3(_, _) -> t
+  case e {
+    Int3(_, _) -> e
     Ident3(_, _, Local(x)) if id == x -> new
-    Ident3(_, _, _) -> t
-    Builtin3(_, _, _) -> t
+    Ident3(_, _, _) -> e
+    Builtin3(_, _, _) -> e
     Projection3(pos, t, e, i) -> Projection3(pos, sub(t), sub(e), i)
+    Inter3(pos, t, es) ->
+      Inter3(pos, sub(t), list.map(es, fn(e) { #(e.0, sub(e.1), sub(e.2)) }))
     Func3(pos, t, args, body) ->
       case list.any(args, fn(a) { a.id == id }) {
         True -> t
@@ -293,7 +576,7 @@ pub fn substitute(id: Id, new: Expr3, t: Expr3) -> Expr3 {
       App3(pos, sub(t), sub(func), list.map(args, sub))
     TPi3(pos, args, body) ->
       case list.any(args, fn(a) { a.id == id }) {
-        True -> t
+        True -> e
         False ->
           TPi3(
             pos,
@@ -306,8 +589,8 @@ pub fn substitute(id: Id, new: Expr3, t: Expr3) -> Expr3 {
             substitute(id, new, body),
           )
       }
-    TType3(_) -> t
-    TKind3(_) -> t
+    TType3(_) -> e
+    TKind3(_) -> e
     TInter3(pos, ts) -> TInter3(pos, list.map(ts, fn(t) { #(t.0, sub(t.1)) }))
   }
   // InterAccess3(pos, t, e, field) -> InterAccess3(pos, sub(t), sub(e), field)
@@ -322,6 +605,8 @@ fn swap_ident(from id: Id, to new: Id, in t: Expr3) -> Expr3 {
     Ident3(_, _, _) -> t
     Builtin3(_, _, _) -> t
     Projection3(pos, t, e, i) -> Projection3(pos, sub(t), sub(e), i)
+    Inter3(pos, t, es) ->
+      Inter3(pos, sub(t), list.map(es, fn(e) { #(e.0, sub(e.1), sub(e.2)) }))
     Func3(pos, t, args, body) ->
       case list.any(args, fn(a) { a.id == new }) {
         True -> t
@@ -435,7 +720,7 @@ pub fn typeof(e: Expr3) -> Expr3 {
     Ident3(_, t, _) -> t
     Builtin3(_, t, _) -> t
     Projection3(_, t, _, _) -> t
-    // InterAccess3(_, t, _, _) -> t
+    Inter3(_, t, _) -> t
     Func3(_, t, _, _) -> t
     App3(_, t, _, _) -> t
     TPi3(_, _, b) -> typeof(b)

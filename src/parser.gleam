@@ -1,7 +1,8 @@
 import core.{
   type Error, type Expr1, type Library0, type Library1, type Module0,
-  type Module1, type Stmt1, App1, Arg1, ArgMode, Builtin1, CouldntOpenFile, Def1,
-  Func1, Ident1, Int1, Library1, Module1, ParseError, Projection1, TInter1, TPi1,
+  type Module1, type Monad, type State, type Stmt1, App1, Arg1, ArgMode,
+  Builtin1, CouldntOpenFile, Def1, Func1, Ident1, Int1, Inter1, Library1,
+  Module1, ParseError, Projection1, TInter1, TPi1, monadic_map,
 }
 import gleam/string
 import gleam/int
@@ -12,12 +13,11 @@ import party.{
   type Parser, alphanum, alt, char, choice, digit, do, end, lazy,
   lowercase_letter, many, many1, not, perhaps, pos, return, satisfy, try,
 }
-import monad.{type Monad, type State, monadic_map}
 import simplifile
 
 pub fn parse_lib(lib: Library0, state: State) -> Monad(Library1) {
-  use entry, state <- monad.do(parse_module(lib.entry, state))
-  monad.return(Library1(lib.path, entry), state)
+  use entry, state <- core.do(parse_module(lib.entry, state))
+  core.return(Library1(lib.path, entry), state)
 }
 
 fn parse_module(mod: Module0, state: State) -> Monad(Module1) {
@@ -25,7 +25,7 @@ fn parse_module(mod: Module0, state: State) -> Monad(Module1) {
     mod.files,
     state,
     fn(filename, state) {
-      use code, state <- monad.try(
+      use code, state <- core.try(
         simplifile.read(filename)
         |> result.replace_error(CouldntOpenFile(filename)),
         state,
@@ -41,7 +41,7 @@ fn parse_module(mod: Module0, state: State) -> Monad(Module1) {
       #([], map.new()),
       fn(curr, new) { #(list.append(new.0, curr.0), map.merge(curr.1, new.1)) },
     )
-  monad.return(
+  core.return(
     Module1(mod.path, subs, symbol_table, mod.files, list.reverse(ast)),
     state,
   )
@@ -165,11 +165,36 @@ fn tinter(path: String) -> Parser(Expr1, Nil) {
     use _ <- do(ws())
     use _ <- do(char(":"))
     use t <- do(lazy(expr(path)))
-    use _ <- do(ws())
     return(#(name, t))
   }))
   use _ <- do(char("}"))
   return(TInter1(pos, fields))
+}
+
+fn inter(path: String) -> Parser(Expr1, Nil) {
+  use pos <- do(pos())
+  use _ <- do(party.char("["))
+  use fields <- do(comma_sep({
+    use _ <- do(ws())
+    use name <- do(identstring())
+    use _ <- do(ws())
+    use _ <- do(char(":"))
+    use val <- do(lazy(expr(path)))
+    use _ <- do(char(":"))
+    use t <- do(lazy(expr(path)))
+    return(#(name, val, t))
+  }))
+  case list.is_empty(fields) {
+    // I was too lazy to make a comma_sep1
+    True -> {
+      use _ <- do(not(char("]")))
+      panic("")
+    }
+    False -> {
+      use _ <- do(char("]"))
+      return(Inter1(pos, fields))
+    }
+  }
 }
 
 fn ws() -> Parser(Nil, a) {
@@ -225,6 +250,7 @@ fn expr(path: String) -> fn() -> Parser(Expr1, Nil) {
     use lit <- do(choice([
       tinter(path),
       tforall(path),
+      inter(path),
       intlit(),
       paren_expr(path),
       lamlit(path),
@@ -298,5 +324,5 @@ fn parse(
       src,
     )
     |> result.map_error(ParseError(path, _))
-  monad.try(res, state, monad.return)
+  core.try(res, state, core.return)
 }
