@@ -7,7 +7,8 @@ import party.{type ParseError}
 import gleam/io
 import gleam/string_builder.{type StringBuilder}
 
-pub type Position = party.Position
+pub type Position =
+  party.Position
 
 pub opaque type State {
   State(id: Id, log: StringBuilder)

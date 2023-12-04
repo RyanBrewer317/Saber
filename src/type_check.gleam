@@ -1,13 +1,13 @@
 import core.{
   type Arg3, type Expr2, type Expr3, type Id, type Ident, type Library2,
-  type Library3, type Module2, type Module3, type Monad, type State, type Stmt2,
-  type Stmt3, AccessingNonInter, App2, App3, Arg2, Arg3, ArgMode, Builtin2,
-  Builtin3, CallingNonFunction, CallingWrongArity, Def2, Def3, Func2, Func3,
-  Global, Ident2, Ident3, Int2, Int3, Inter2, Inter3, Library3, Local, Module3,
-  Projection2, Projection3, ProjectionOutOfBounds, TInter2, TInter3, TKind3,
-  TPi2, TPi3, TType2, TType3, TypeError, UnequalIntersectionComponents, alpha_eq,
-  do, erase, fail, ident_to_str, monadic_fold, monadic_map, return, substitute,
-  typeof, TEq2, TEq3, type Position
+  type Library3, type Module2, type Module3, type Monad, type Position,
+  type State, type Stmt2, type Stmt3, AccessingNonInter, App2, App3, Arg2, Arg3,
+  ArgMode, Builtin2, Builtin3, CallingNonFunction, CallingWrongArity, Def2, Def3,
+  Func2, Func3, Global, Ident2, Ident3, Int2, Int3, Inter2, Inter3, Library3,
+  Local, Module3, Projection2, Projection3, ProjectionOutOfBounds, TEq2, TEq3,
+  TInter2, TInter3, TKind3, TPi2, TPi3, TType2, TType3, TypeError,
+  UnequalIntersectionComponents, alpha_eq, do, erase, fail, ident_to_str,
+  monadic_fold, monadic_map, return, substitute, typeof,
 }
 import gleam/map.{type Map, get, insert}
 import gleam/result

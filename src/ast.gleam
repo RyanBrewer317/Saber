@@ -2,9 +2,9 @@ import core.{
   type Expr1, type Expr2, type Id, type Library1, type Library2, type Module1,
   type Module2, type Monad, type State, type Stmt1, type Stmt2, App1, App2, Arg2,
   Builtin1, Builtin2, Def1, Def2, Func1, Func2, Global, Ident1, Ident2, Int1,
-  Int2, Inter1, Inter2, Library2, Local, Module2, Projection1, Projection2,
-  TInter1, TInter2, TPi1, TPi2, TType2, Undefined, do, fail, fresh, label,
-  monadic_fold, monadic_map, return, TEq1, TEq2
+  Int2, Inter1, Inter2, Library2, Local, Module2, Projection1, Projection2, TEq1,
+  TEq2, TInter1, TInter2, TPi1, TPi2, TType2, Undefined, do, fail, fresh, label,
+  monadic_fold, monadic_map, return,
 }
 import gleam/list
 import gleam/map
