@@ -7,7 +7,7 @@ import core.{
   Projection2, Projection3, ProjectionOutOfBounds, TInter2, TInter3, TKind3,
   TPi2, TPi3, TType2, TType3, TypeError, UnequalIntersectionComponents, alpha_eq,
   do, erase, fail, ident_to_str, monadic_fold, monadic_map, return, substitute,
-  typeof,
+  typeof, TEq2, TEq3, type Position
 }
 import gleam/map.{type Map, get, insert}
 import gleam/result
@@ -72,14 +72,18 @@ fn stmt(
         |> with_state(state)
         |> with_gamma(insert(c.gamma, Global(name), t))
       use e, state <- do(expr(val, c))
-      return(
-        #(
-          Def3(p, name, t, e),
-          map.from_list([#(Global(name), t)]),
-          map.from_list([#(Global(name), e)]),
-        ),
-        state,
-      )
+      case alpha_eq(typeof(e), t) {
+        True ->
+          return(
+            #(
+              Def3(p, name, t, e),
+              map.from_list([#(Global(name), t)]),
+              map.from_list([#(Global(name), e)]),
+            ),
+            state,
+          )
+        False -> fail(TypeError(p, typeof(e), t))
+      }
     }
   }
 }
@@ -97,6 +101,7 @@ fn expr(e: Expr2, c: Context) -> Monad(Expr3) {
     TInter2(p, ts) -> intersection_type(p, ts, c)
     Projection2(p, e, i) -> projection(p, e, i, c)
     Inter2(p, es) -> intersection(p, es, c)
+    TEq2(p, l, r) -> identity_type(p, l, r, c)
   }
 }
 
@@ -134,23 +139,31 @@ fn application(p, func, actual_args, c: Context) -> Monad(Expr3) {
   )
   use #(args_rev, ret, _), state <- monadic_fold(
     list.zip(formal_args, actual_args),
-    #([], bodyt, c.gamma),
+    #([], bodyt, []),
     state,
     fn(so_far, pair, state) {
-      let #(args_rev, ret, gamma) = so_far
+      let #(args_rev, ret, subs) = so_far
       let c =
         c
-        |> with_gamma(gamma)
         |> with_state(state)
       let #(formal, actual) = pair
       use actual, state <- do(expr(actual, c))
-      case alpha_eq(typeof(actual), formal.t) {
+      let formal_t =
+        list.fold(
+          subs,
+          formal.t,
+          fn(t, s) {
+            let #(from, to) = s
+            substitute(from: from, to: to, in: t)
+          },
+        )
+      case alpha_eq(typeof(actual), formal_t) {
         True ->
           return(
             #(
-              [actual, ..args_rev],
+              [#(formal.mode, actual), ..args_rev],
               substitute(from: formal.id, to: actual, in: ret),
-              insert(gamma, Local(formal.id), actual),
+              [#(formal.id, actual), ..subs],
             ),
             state,
           )
@@ -268,7 +281,12 @@ fn intersection(p, es: List(#(Id, Expr2, Expr2)), c: Context) -> Monad(Expr3) {
   let assert [e, ..rest] = es
   let #(first_id, first, first_t) = e
   use first, state <- do(expr(first, c))
-  let erased_first = erase(first, c.defs)
+  use erased_first, state <- do(core.normalize(
+    p,
+    erase(first, c.defs),
+    state,
+    map.new(),
+  ))
   use first_t, state <- do(expr(first_t, with_state(c, state)))
   use <- bool.guard(
     when: !alpha_eq(first_t, typeof(first)),
@@ -290,8 +308,14 @@ fn intersection(p, es: List(#(Id, Expr2, Expr2)), c: Context) -> Monad(Expr3) {
         |> with_gamma(gamma)
       let #(id, e, t) = component
       use e, state <- do(expr(e, c))
+      use erased_e, state <- do(core.normalize(
+        p,
+        erase(e, c.defs),
+        state,
+        map.new(),
+      ))
       use <- bool.guard(
-        when: erased_first != erase(e, c.defs),
+        when: !core.erased_alpha_eq(erased_e, erased_first),
         return: fail(UnequalIntersectionComponents(p, first, e)),
       )
       use t, state <- do(expr(t, with_state(c, state)))
@@ -321,6 +345,12 @@ fn projection(p, e, i, c: Context) -> Monad(Expr3) {
     }
     _ -> fail(AccessingNonInter(p, e, i))
   }
+}
+
+fn identity_type(p: Position, l: Expr2, r: Expr2, c: Context) -> Monad(Expr3) {
+  use l, state <- do(expr(l, c))
+  use r, state <- do(expr(r, with_state(c, state)))
+  return(TEq3(p, l, r), state)
 }
 
 fn type2(t: Expr3) -> Expr2 {
@@ -358,7 +388,8 @@ fn instantiate(solutions: Map(Id, Expr3), t: Expr3) -> Expr3 {
         list.map(args, fn(a) { Arg3(mode: a.mode, id: a.id, t: i(a.t)) }),
         i(body),
       )
-    App3(p, t, func, args) -> App3(p, i(t), i(func), list.map(args, i))
+    App3(p, t, func, args) ->
+      App3(p, i(t), i(func), list.map(args, fn(a) { #(a.0, i(a.1)) }))
     _ -> t
   }
 }
@@ -408,7 +439,7 @@ fn eval_application(t, func, args, env, state) -> Monad(Expr3) {
   use args, state <- monadic_map(
     args,
     state,
-    fn(a, state) { eval(a, env, state) },
+    fn(a, state) { eval(a.1, env, state) },
   )
   case func {
     Func3(_, _, formal_args, body) -> {

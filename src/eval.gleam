@@ -1,13 +1,10 @@
 import core.{
-  type Expr3, type Ident, type Library3, type Module3, type Monad, type State,
-  type Stmt3, App3, Builtin3, Def3, Func3, Global, Ident3, Import3, Int3, Inter3,
-  Local, Projection3, TInter3, TKind3, TPi3, TType3, do, ident_to_str,
-  monadic_fold, monadic_map, return,
+  type Expr3, type Ident, type Library3, type Module3, type Monad, type PureExpr,
+  type State, type Stmt3, App, App3, Builtin, Builtin3, Def3, Func, Func3,
+  Global, Ident, Ident3, Int, Int3, Inter3, Local, Projection3, do, monadic_fold,
+  monadic_map, return,
 }
 import gleam/list
-import gleam/string
-import gleam/result
-import gleam/io
 import gleam/map.{type Map, get, insert}
 
 type Library =
@@ -25,8 +22,8 @@ type Expr =
 pub fn eval_lib(lib: Library, state: State) -> Monad(Nil) {
   use defs, state <- do(eval_mod(lib.entry, state))
   case get(defs, Global("main")) {
-    Ok(Func3(_, _, [], body)) -> {
-      use _, state <- do(expr(body, lib.entry, defs, Error(Nil), state))
+    Ok(Func([], body)) -> {
+      use _, state <- do(normalize(body, state, defs))
       return(Nil, state)
     }
     Ok(_) -> panic("")
@@ -34,15 +31,15 @@ pub fn eval_lib(lib: Library, state: State) -> Monad(Nil) {
   }
 }
 
-fn eval_mod(mod: Module, state: State) -> Monad(Map(Ident, Expr3)) {
+fn eval_mod(mod: Module, state: State) -> Monad(Map(Ident, PureExpr)) {
   let assert [s, ..ss] = mod.ast
-  use start_heap, state <- do(stmt(s, mod, map.new(), state))
+  use start_heap, state <- do(stmt(s, map.new(), state))
   use heap, state <- monadic_fold(
     ss,
     start_heap,
     state,
     fn(heap, s, state) {
-      use heap2, state <- do(stmt(s, mod, heap, state))
+      use heap2, state <- do(stmt(s, heap, state))
       return(map.merge(heap2, heap), state)
     },
   )
@@ -51,137 +48,102 @@ fn eval_mod(mod: Module, state: State) -> Monad(Map(Ident, Expr3)) {
 
 fn stmt(
   s: Stmt,
-  mod: Module,
-  heap: Map(Ident, Expr),
+  heap: Map(Ident, PureExpr),
   state: State,
-) -> Monad(Map(Ident, Expr)) {
+) -> Monad(Map(Ident, PureExpr)) {
   case s {
-    Def3(_, name, t, val) -> {
-      use _, state <- do(expr(t, mod, heap, Ok(val), state))
+    Def3(_, name, _, val) -> {
       use val2, state <- do(expr(
         val,
-        mod,
-        insert(heap, Global(name), val),
-        Error(Nil),
+        insert(heap, Global(name), erase(val, heap)),
         state,
       ))
       return(insert(map.new(), Global(name), val2), state)
     }
-    Import3(_, name) -> {
-      use heap2, state <- do(eval_mod(
-        mod.subs
-        |> list.find(fn(m) { m.path == mod.path <> "/" <> name })
-        |> result.lazy_unwrap(fn() { panic("module not found") }),
-        state,
-      ))
-      return(heap2, state)
-    }
   }
 }
 
-fn expr(
-  e: Expr,
-  mod: Module,
-  heap: Map(Ident, Expr),
-  mbval: Result(Expr, Nil),
-  state: State,
-) -> Monad(Expr) {
-  // io.println(core.pretty_expr(e))
-  // io.debug(e)
+fn erase(e: Expr, defs: Map(Ident, PureExpr)) -> PureExpr {
+  let erase = erase(_, defs)
   case e {
-    Int3(p, i) -> return(Int3(p, i), state)
-    Ident3(p, t, id) -> {
-      use _, state <- do(expr(t, mod, heap, Ok(e), state))
-      case get(heap, id) {
-        Ok(val) -> expr(val, mod, heap, mbval, state)
+    Int3(_, i) -> Int(i)
+    Ident3(_, _, id) ->
+      case id {
+        Local(id) -> Ident(id)
+        Global(_) ->
+          case map.get(defs, id) {
+            Ok(val) -> val
+            Error(Nil) -> panic("undefined global during typechecking")
+          }
+      }
+    Builtin3(_, _, name) -> Builtin(name)
+    Projection3(_, _, e, _) -> erase(e)
+    Func3(_, _, args, body) ->
+      Func(
+        list.map(list.filter(args, fn(a) { !a.mode.implicit }), fn(a) { a.id }),
+        erase(body),
+      )
+    App3(_, _, func, args) -> {
+      let args = list.filter(args, fn(a) { !{ a.0 }.implicit })
+      App(erase(func), list.map(args, fn(a) { erase(a.1) }))
+    }
+    Inter3(_, _, args) -> {
+      let assert Ok(first) = list.first(args)
+      erase(first.1)
+    }
+    _ -> panic("")
+  }
+}
+
+fn normalize(
+  e: PureExpr,
+  state: State,
+  heap: Map(Ident, PureExpr),
+) -> Monad(PureExpr) {
+  case e {
+    Ident(id) ->
+      case map.get(heap, Local(id)) {
+        Ok(val) -> return(val, state)
         Error(Nil) ->
           panic(
-            "undefined variable " <> ident_to_str(id) <> " at runtime, " <> string.inspect(
-              p,
-            ),
+            "undefined variable in pure expr, which should be during typechecking",
           )
       }
-    }
-    Builtin3(p, t, n) -> {
-      use t2, state <- do(expr(t, mod, heap, Ok(e), state))
-      return(Builtin3(p, t2, n), state)
-    }
-    // no eta reduction
-    Func3(p, t, args, body) -> {
-      use t2, state <- do(expr(t, mod, heap, Ok(e), state))
-      use #(args2, _), state <- monadic_fold(
-        args,
-        #([], heap),
-        state,
-        fn(s, a, state) {
-          let #(args_so_far, heap_so_far) = s
-          use argt2, state <- do(expr(a.t, mod, heap_so_far, Error(Nil), state))
-          return(
-            #([a, ..args_so_far], insert(heap_so_far, Local(a.id), argt2)),
-            state,
-          )
-        },
-      )
-      return(Func3(p, t2, list.reverse(args2), body), state)
-    }
-    App3(_, _, func, args) -> {
-      use func2, state <- do(expr(func, mod, heap, Error(Nil), state))
-      use args2, state <- monadic_map(
+    App(func, args) -> {
+      use args, state <- monadic_map(
         args,
         state,
-        fn(a, state) { expr(a, mod, heap, Error(Nil), state) },
+        fn(a, state) { normalize(a, state, heap) },
       )
-      case func2 {
-        Func3(_, _, formal_args, body) ->
-          expr(
-            body,
-            mod,
-            list.fold(
-              list.zip(formal_args, args2),
+      use func, state <- do(normalize(func, state, heap))
+      case func {
+        Func(formals, body) -> {
+          let assert False = list.length(formals) != list.length(args)
+          let heap =
+            map.merge(
+              map.from_list(list.zip(list.map(formals, Local), args)),
               heap,
-              fn(a, b) { map.insert(a, Local({ b.0 }.id), b.1) },
-            ),
-            Error(Nil),
-            state,
-          )
-        Builtin3(_, _, "print") -> {
-          use args3, state <- monadic_map(
-            args,
-            state,
-            fn(a, state) { expr(a, mod, heap, Error(Nil), state) },
-          )
-          let assert [Int3(p, i)] = args3
-          io.println(string.inspect(i))
-          return(Int3(p, i), state)
+            )
+          normalize(body, state, heap)
         }
-        _ -> panic("application of non-function")
+        Builtin("print") -> {
+          let assert [Int(i)] = args
+          core.log(i)
+          return(Int(i), state)
+        }
+        _ -> {
+          core.log(heap)
+          core.log(func)
+          case Nil {
+            Nil -> panic("")
+          }
+        }
       }
     }
-    // no eta reduction
-    TPi3(p, args, body) -> {
-      use #(args2, _), state <- monadic_fold(
-        args,
-        #([], heap),
-        state,
-        fn(s, a, state) {
-          let #(args_so_far, heap_so_far) = s
-          use argt2, state <- do(expr(a.t, mod, heap_so_far, Error(Nil), state))
-          return(
-            #([a, ..args_so_far], insert(heap_so_far, Local(a.id), argt2)),
-            state,
-          )
-        },
-      )
-      return(TPi3(p, list.reverse(args2), body), state)
-    }
-    TType3(_) -> return(e, state)
-    TKind3(_) -> return(e, state)
-    TInter3(p, ts) -> {
-      return(TInter3(p, ts), state)
-    }
-    Projection3(_, _, _, _) -> todo
-    Inter3(_, _, _) -> todo
+    Int(_) | Builtin(_) | Func(_, _) -> return(e, state)
   }
-  // InterAccess3(p, t, e, field) -> return(e, state) // TODO: eval will be operating on pure lambda terms, not annotated ones
-  // type code won't execute unless from a value
+}
+
+fn expr(e: Expr, defs: Map(Ident, PureExpr), state: State) -> Monad(PureExpr) {
+  normalize(erase(e, defs), state, map.new())
 }

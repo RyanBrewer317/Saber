@@ -3,9 +3,11 @@ import gleam/string
 import gleam/list
 import gleam/bool.{guard}
 import gleam/map.{type Map}
-import party.{type ParseError, type Position}
+import party.{type ParseError}
 import gleam/io
 import gleam/string_builder.{type StringBuilder}
+
+pub type Position = party.Position
 
 pub opaque type State {
   State(id: Id, log: StringBuilder)
@@ -292,6 +294,7 @@ pub type Expr1 {
   TPi1(pos: Position, args: List(Arg1), body: Expr1)
   TInter1(pos: Position, args: List(#(String, Expr1)))
   Inter1(pos: Position, args: List(#(String, Expr1, Expr1)))
+  TEq1(pos: Position, left: Expr1, right: Expr1)
 }
 
 pub type Stmt1 {
@@ -317,6 +320,7 @@ pub type Expr2 {
   TType2(pos: Position)
   TInter2(pos: Position, args: List(#(Id, Expr2)))
   Inter2(pos: Position, args: List(#(Id, Expr2, Expr2)))
+  TEq2(pos: Position, left: Expr2, right: Expr2)
 }
 
 pub type Stmt2 {
@@ -333,12 +337,13 @@ pub type Expr3 {
   Builtin3(pos: Position, t: Expr3, name: String)
   Projection3(pos: Position, t: Expr3, expr: Expr3, idx: Int)
   Func3(pos: Position, t: Expr3, args: List(Arg3), body: Expr3)
-  App3(pos: Position, t: Expr3, func: Expr3, args: List(Expr3))
+  App3(pos: Position, t: Expr3, func: Expr3, args: List(#(ArgMode, Expr3)))
   TPi3(pos: Position, args: List(Arg3), body: Expr3)
   TType3(pos: Position)
   TKind3(pos: Position)
   TInter3(pos: Position, args: List(#(Id, Expr3)))
   Inter3(pos: Position, t: Expr3, args: List(#(Id, Expr3, Expr3)))
+  TEq3(pos: Position, left: Expr3, right: Expr3)
 }
 
 pub type PureExpr {
@@ -364,8 +369,15 @@ pub fn erase(e: Expr3, defs: Map(Ident, Expr3)) -> PureExpr {
       }
     Builtin3(_, _, name) -> Builtin(name)
     Projection3(_, _, e, _) -> erase(e)
-    Func3(_, _, args, body) -> Func(list.map(args, fn(a) { a.id }), erase(body))
-    App3(_, _, func, args) -> App(erase(func), list.map(args, erase))
+    Func3(_, _, args, body) ->
+      Func(
+        list.map(list.filter(args, fn(a) { !a.mode.implicit }), fn(a) { a.id }),
+        erase(body),
+      )
+    App3(_, _, func, args) -> {
+      let args = list.filter(args, fn(a) { !{ a.0 }.implicit })
+      App(erase(func), list.map(args, fn(a) { erase(a.1) }))
+    }
     Inter3(_, _, args) -> {
       let assert Ok(first) = list.first(args)
       erase(first.1)
@@ -501,7 +513,7 @@ pub fn pretty_expr3(e: Expr3) -> String {
     App3(_, _, func, args) ->
       pretty_expr3(func) <> "(" <> {
         args
-        |> list.map(pretty_expr3)
+        |> list.map(fn(a) { pretty_expr3(a.1) })
         |> string.join(", ")
       } <> ")"
     TPi3(_, args, body) ->
@@ -531,6 +543,7 @@ pub fn pretty_expr3(e: Expr3) -> String {
         |> list.map(fn(t) { "x" <> to_string(t.0) <> ": " <> pretty_expr3(t.1) })
         |> string.join(", ")
       } <> "}"
+    TEq3(_, l, r) -> pretty_expr3(l) <> " = " <> pretty_expr3(r)
   }
 }
 
@@ -543,11 +556,13 @@ pub fn contains3(e: Expr3, id: Id) -> Bool {
     Projection3(_, t, e, _) -> c(t) || c(e)
     Func3(_, t, args, body) ->
       c(t) || list.any(args, fn(a) { c(a.t) }) || c(body)
-    App3(_, t, func, args) -> c(t) || c(func) || list.any(args, c)
+    App3(_, t, func, args) ->
+      c(t) || c(func) || list.any(args, fn(a) { c(a.1) })
     TPi3(_, args, body) -> list.any(args, fn(a) { c(a.t) }) || c(body)
     TInter3(_, ts) -> list.any(ts, fn(t) { c(t.1) })
     Inter3(_, t, es) -> c(t) || list.any(es, fn(e) { c(e.1) })
     Int3(_, _) | TType3(_) | TKind3(_) -> False
+    TEq3(_, l, r) -> c(l) || c(r)
   }
 }
 
@@ -573,7 +588,7 @@ pub fn substitute(from id: Id, to new: Expr3, in e: Expr3) -> Expr3 {
           )
       }
     App3(pos, t, func, args) ->
-      App3(pos, sub(t), sub(func), list.map(args, sub))
+      App3(pos, sub(t), sub(func), list.map(args, fn(a) { #(a.0, sub(a.1)) }))
     TPi3(pos, args, body) ->
       case list.any(args, fn(a) { a.id == id }) {
         True -> e
@@ -592,6 +607,7 @@ pub fn substitute(from id: Id, to new: Expr3, in e: Expr3) -> Expr3 {
     TType3(_) -> e
     TKind3(_) -> e
     TInter3(pos, ts) -> TInter3(pos, list.map(ts, fn(t) { #(t.0, sub(t.1)) }))
+    TEq3(pos, l, r) -> TEq3(pos, sub(l), sub(r))
   }
   // InterAccess3(pos, t, e, field) -> InterAccess3(pos, sub(t), sub(e), field)
 }
@@ -619,7 +635,7 @@ fn swap_ident(from id: Id, to new: Id, in t: Expr3) -> Expr3 {
           )
       }
     App3(pos, t, func, args) ->
-      App3(pos, sub(t), sub(func), list.map(args, sub))
+      App3(pos, sub(t), sub(func), list.map(args, fn(a) { #(a.0, sub(a.1)) }))
     TPi3(pos, args, body) ->
       case list.any(args, fn(a) { a.id == id }) {
         True -> t
@@ -633,6 +649,7 @@ fn swap_ident(from id: Id, to new: Id, in t: Expr3) -> Expr3 {
     TType3(_) -> t
     TKind3(_) -> t
     TInter3(pos, ts) -> TInter3(pos, list.map(ts, fn(t) { #(t.0, sub(t.1)) }))
+    TEq3(pos, l, r) -> TEq3(pos, sub(l), sub(r))
   }
   // InterAccess3(pos, t, e, field) -> InterAccess3(pos, sub(t), sub(e), field)
 }
@@ -675,7 +692,7 @@ pub fn alpha_eq(e1: Expr3, e2: Expr3) -> Bool {
     App3(_, _, func1, args1), App3(_, _, func2, args2) ->
       alpha_eq(func1, func2) && list.all(
         list.zip(args1, args2),
-        fn(p) { alpha_eq(p.0, p.1) },
+        fn(p) { alpha_eq({ p.0 }.1, { p.1 }.1) },
       )
     TType3(_), TType3(_) -> True
     TInter3(_, ts1), TInter3(_, ts2) ->
@@ -686,14 +703,12 @@ pub fn alpha_eq(e1: Expr3, e2: Expr3) -> Bool {
           alpha_eq(t1, t2)
         },
       )
+    _, _ -> False
   }
-  // InterAccess3(_, t1, e1, field1), InterAccess3(_, t2, e2, field2) -> alpha_eq(t1, t2) && alpha_eq(e1, e2) && field1 == field2
-  // _, _ -> False
 }
 
 pub type Stmt3 {
   Def3(pos: Position, id: String, t: Expr3, val: Expr3)
-  Import3(pos: Position, name: String)
 }
 
 pub fn pretty_stmt3(s: Stmt3) -> String {
@@ -710,7 +725,6 @@ pub fn pretty_stmt3(s: Stmt3) -> String {
         ),
         ", ",
       ) <> ") -> " <> pretty_expr3(rett) <> " {\n  " <> pretty_expr3(body) <> "\n}"
-    Import3(_, name) -> "import " <> name
   }
 }
 
@@ -727,5 +741,6 @@ pub fn typeof(e: Expr3) -> Expr3 {
     TType3(pos) -> TKind3(pos)
     TKind3(_) -> panic("kind is untypeable")
     TInter3(pos, _) -> TType3(pos)
+    TEq3(pos, _, _) -> TType3(pos)
   }
 }

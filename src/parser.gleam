@@ -2,7 +2,7 @@ import core.{
   type Error, type Expr1, type Library0, type Library1, type Module0,
   type Module1, type Monad, type State, type Stmt1, App1, Arg1, ArgMode,
   Builtin1, CouldntOpenFile, Def1, Func1, Ident1, Int1, Inter1, Library1,
-  Module1, ParseError, Projection1, TInter1, TPi1, monadic_map,
+  Module1, ParseError, Projection1, TInter1, TPi1, monadic_map, TEq1
 }
 import gleam/string
 import gleam/int
@@ -236,7 +236,21 @@ fn postfix(e: Expr1, path: String) -> Parser(Expr1, Nil) {
               use _ <- do(ws())
               postfix(e, path)
             }
-            Error(Nil) -> return(e)
+            Error(Nil) -> {
+              use mb_eq <- do(perhaps(char("=")))
+              case mb_eq {
+                Ok(_) -> {
+                  use _ <- do(ws())
+                  use rhs <- do(lazy(expr(path)))
+                  let e = TEq1(pos, e, rhs)
+                  use _ <- do(ws())
+                  postfix(e, path)
+                }
+                Error(Nil) -> {
+                  return(e)
+                }
+              }
+            }
           }
         }
       }

@@ -4,7 +4,7 @@ import core.{
   Builtin1, Builtin2, Def1, Def2, Func1, Func2, Global, Ident1, Ident2, Int1,
   Int2, Inter1, Inter2, Library2, Local, Module2, Projection1, Projection2,
   TInter1, TInter2, TPi1, TPi2, TType2, Undefined, do, fail, fresh, label,
-  monadic_fold, monadic_map, return,
+  monadic_fold, monadic_map, return, TEq1, TEq2
 }
 import gleam/list
 import gleam/map
@@ -212,6 +212,11 @@ fn expr(e: Expr1, renames: Renames, mod: Module1, state: State) -> Monad(Expr2) 
       )
       let ts = list.reverse(ts_rev)
       return(TInter2(p, ts), state)
+    }
+    TEq1(pos, l, r) -> {
+      use l, state <- do(expr(l, renames, mod, state))
+      use r, state <- do(expr(r, renames, mod, state))
+      return(TEq2(pos, l, r), state)
     }
   }
 }
